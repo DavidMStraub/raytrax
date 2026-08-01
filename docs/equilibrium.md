@@ -49,12 +49,12 @@ The import involves two grids: an intermediate curvilinear grid in VMEC flux coo
 ```python
 grid = raytrax.VmecGridResolution(
     cylindrical=raytrax.CylindricalGridResolution(
-        n_r=60,    # R points on the output cylindrical grid
-        n_z=70,    # Z points on the output cylindrical grid
+        n_r=60,  # R points on the output cylindrical grid
+        n_z=70,  # Z points on the output cylindrical grid
         n_phi=64,  # toroidal planes on the output cylindrical grid
         n_rho_profile=200,  # points for the 1-D dV/dρ profile
     ),
-    n_rho=50,    # radial flux surfaces on the intermediate VMEC grid
+    n_rho=50,  # radial flux surfaces on the intermediate VMEC grid
     n_theta=60,  # poloidal points on the intermediate VMEC grid
 )
 mag_conf = raytrax.MagneticConfiguration.from_vmec_wout(vmec_wout, grid=grid)

@@ -12,10 +12,10 @@ The ODE solver used for ray tracing has four tunable parameters, exposed via [`T
 import raytrax
 
 settings = raytrax.TracerSettings(
-    relative_tolerance=1e-4,   # PID controller rtol
-    absolute_tolerance=1e-6,   # PID controller atol
-    max_step_size=0.05,        # metres
-    max_arc_length=20.0,       # metres
+    relative_tolerance=1e-4,  # PID controller rtol
+    absolute_tolerance=1e-6,  # PID controller atol
+    max_step_size=0.05,  # metres
+    max_arc_length=20.0,  # metres
 )
 
 result = raytrax.trace(mag_conf, profiles, beam, settings=settings)
@@ -77,6 +77,7 @@ Pre-warming only helps within a single Python session. JAX also supports a **per
 
 ```python
 import jax
+
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 
 import raytrax  # import after setting the cache dir

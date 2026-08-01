@@ -42,7 +42,9 @@ result = raytrax.trace(mag_conf, profiles, beam)
 
 print(f"Optical depth τ     = {result.optical_depth:.3f}")
 print(f"Absorbed fraction   = {result.absorbed_power_fraction:.1%}")
-print(f"Deposition at ρ     = {result.deposition_rho_mean:.2f} ± {result.deposition_rho_std:.2f}")
+print(
+    f"Deposition at ρ     = {result.deposition_rho_mean:.2f} ± {result.deposition_rho_std:.2f}"
+)
 ```
 
 ## Visualizations

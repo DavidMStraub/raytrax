@@ -27,9 +27,7 @@ profiles = RadialProfiles(
 )
 beam = Beam(
     position=jnp.array(PortA.D1.cartesian),
-    direction=jnp.array(
-        w7x_aiming_angles_to_direction(-10.0, 0.0, PortA.D1.phi_deg)
-    ),
+    direction=jnp.array(w7x_aiming_angles_to_direction(-10.0, 0.0, PortA.D1.phi_deg)),
     frequency=jnp.array(140e9),
     mode="O",
     power=1e6,

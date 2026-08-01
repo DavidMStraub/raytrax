@@ -20,6 +20,7 @@ Raytrax requires 64-bit floating-point arithmetic. JAX defaults to 32-bit, so yo
 
 ```python
 import jax
+
 jax.config.update("jax_enable_x64", True)
 ```
 
@@ -43,6 +44,7 @@ An example where an equilibrium is loaded from a NetCDF file:
 
 ```python
 import jax
+
 jax.config.update("jax_enable_x64", True)
 
 import raytrax, vmecpp
@@ -62,9 +64,7 @@ rho = jnp.linspace(0, 1, 40)
 n_e = 1.0 * (1 - rho**2)
 T_e = 2.0 * (1 - rho**1.5)
 profiles = raytrax.RadialProfiles(
-    rho=rho,
-    electron_density=n_e,
-    electron_temperature=T_e
+    rho=rho, electron_density=n_e, electron_temperature=T_e
 )
 ```
 
