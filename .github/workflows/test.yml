@@ -10,9 +10,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install ruff
@@ -28,16 +28,16 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
           pip install pyvista vmecpp
-          pip install .[test,plot2d]
+          pip install .[test,plot3d]
       - name: Static type check with mypy
         run: |
           mypy --install-types --non-interactive --ignore-missing-imports src/raytrax
