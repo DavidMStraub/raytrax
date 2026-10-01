@@ -101,20 +101,21 @@ def weakly_relativistic_dielectric_tensor(
     Q_h2 = Fq[q + 1] / mu + n_par**2 * (Fq[q + 2] + Fq[q] - 2 * Fq[q + 1])
     D = D.at[2, 2].set(mu * a_shkarofsky(0, 0) * Q_h2)
 
-    # s = 0, sum over k
+    # s = 0, sum over k (same terms as for s > 0 below, but without the -s copy)
     for k in range(1, max_k + 1):
         b_0k_lam = b_shkarofsky(0, k) * lam ** (k - 1)
         a_0k_lam = a_shkarofsky(0, k) * lam ** (k - 1)
+        q = k + 1  # s + k + 1
         Q_h0 = Fq[q]
         Q_h1 = (Fq[q] - Fq[q + 1]) * n_par
         Q_h2 = Fq[q + 1] / mu + (Fq[q + 2] + Fq[q] - 2 * Fq[q + 1]) * n_par**2
         # D_11, D_12, D_13 vanish
         # D_22
-        D = D.at[1, 1].set(b_0k_lam * Q_h0)
+        D = D.at[1, 1].add(b_0k_lam * Q_h0)
         # D_23
-        D = D.at[1, 2].set(-1j * sqrt_lam_mu * k * a_0k_lam * Q_h1)
+        D = D.at[1, 2].add(-1j * sqrt_lam_mu * k * a_0k_lam * Q_h1)
         # D_33
-        D = D.at[2, 2].add(-mu * lam * a_0k_lam * Q_h2)
+        D = D.at[2, 2].add(lam * mu * a_0k_lam * Q_h2)
 
     # sum over s > 0, k >= 0
     for s in range(1, max_s + 1):
