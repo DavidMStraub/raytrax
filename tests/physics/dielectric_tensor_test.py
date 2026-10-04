@@ -184,6 +184,49 @@ def test_weakly_relativistic_converges_to_cold():
     )
 
 
+def test_weakly_relativistic_converges_with_larmor_order():
+    """Adding higher orders in the Larmor radius expansion must change the tensor
+    less and less for small k_perp * rho, near the second harmonic resonance."""
+    kwargs = dict(
+        frequency=140e9,
+        plasma_frequency=63.5e9,
+        cyclotron_frequency=0.52 * 140e9,
+        thermal_velocity=quantities.normalized_electron_thermal_velocity(
+            electron_temperature_keV=10.0
+        ),
+        refractive_index_para=0.8,
+        refractive_index_perp=0.4,
+    )
+    eps = [
+        weakly_relativistic_dielectric_tensor(max_s=order, max_k=order, **kwargs)
+        for order in (2, 3, 4)
+    ]
+    np.testing.assert_allclose(eps[1], eps[0], rtol=0, atol=1e-3)
+    np.testing.assert_allclose(eps[2], eps[1], rtol=0, atol=1e-5)
+
+
+def test_weakly_relativistic_s0_terms_accumulate():
+    """The s = 0 contributions to D_22 and D_23 are sums over k; increasing max_k
+    with max_s fixed must only add small corrections, not replace earlier terms."""
+    kwargs = dict(
+        frequency=140e9,
+        plasma_frequency=63.5e9,
+        cyclotron_frequency=0.52 * 140e9,
+        thermal_velocity=quantities.normalized_electron_thermal_velocity(
+            electron_temperature_keV=10.0
+        ),
+        refractive_index_para=0.8,
+        refractive_index_perp=0.4,
+        max_s=3,
+    )
+    eps_k3 = weakly_relativistic_dielectric_tensor(max_k=3, **kwargs)
+    eps_k4 = weakly_relativistic_dielectric_tensor(max_k=4, **kwargs)
+    for i, j in [(1, 1), (1, 2), (2, 2)]:
+        np.testing.assert_allclose(
+            eps_k4[i, j], eps_k3[i, j], rtol=0, atol=1e-5, err_msg=f"eps[{i},{j}]"
+        )
+
+
 @pytest.mark.parametrize("mode", ["X", "O"])
 def test_dispersion_invariant_under_d_sign_flip(mode):
     """The dispersion relation det(Λ) = 0 is invariant under D → −D.
