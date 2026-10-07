@@ -76,7 +76,7 @@ For the power flux vector in the denominator,
 
 $$\boldsymbol{F} = -\frac{1}{2}\frac{\partial}{\partial\boldsymbol{N}}\mathrm{Re}\!\left(\hat{\boldsymbol{e}}^* \cdot \boldsymbol{\mathsf{D}}^H \cdot \hat{\boldsymbol{e}}\right)$$
 
-raytrax evaluates this gradient using the cold dielectric tensor.
+raytrax evaluates this gradient using the cold dielectric tensor. This approximation is least accurate at the fundamental harmonic, in particular for X mode, where the thermal corrections to the Hermitian part of the dielectric tensor are largest.
 
 It is implemented in `raytrax.physics.power_flux.cold_power_flux_vector_stix`.
 

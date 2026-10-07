@@ -79,6 +79,14 @@ def hamiltonian(
     )
 
 
+hamiltonian_value_and_gradients = jax.value_and_grad(
+    hamiltonian, argnums=(0, 1), has_aux=True
+)
+r"""Compute $\mathcal{H}$ together with both gradients in a single pass.
+
+Returns ``((H, HamiltonianAux(...)), (grad_r, grad_n))``.
+"""
+
 hamiltonian_gradients = jax.grad(hamiltonian, argnums=(0, 1), has_aux=True)
 r"""Compute both Hamiltonian gradients $(\partial \mathcal{H}/\partial \boldsymbol{r},\, \partial \mathcal{H}/\partial \boldsymbol{n})$ in a single backward pass.
 

@@ -5,6 +5,7 @@ import numpy as np
 
 from raytrax.api import _bin_power_deposition, _next_power_of_two, trace
 from raytrax.equilibrium.interpolate import MagneticConfiguration
+from raytrax.physics import dispersion, quantities
 from raytrax.types import Beam, RadialProfiles, TracerSettings
 
 
@@ -97,6 +98,50 @@ def test_trace_w7x_beam(w7x_wout):
     assert hasattr(result, "radial_profile")
     assert result.beam_profile is not None
     assert result.radial_profile is not None
+
+
+def test_ray_stays_on_dispersion_surface_with_finite_edge_density(
+    tokamak_magnetic_configuration,
+):
+    """With ne(rho=1) > 0 the ray stays on the cold dispersion surface in the plasma."""
+    rho = jnp.linspace(0, 1, 40)
+    profiles = RadialProfiles(
+        rho=rho,
+        electron_density=0.4 * (1 - rho**2) + 0.2,
+        electron_temperature=3.0 * (1 - rho**2) + 0.1,
+    )
+    direction = jnp.array([-1.0, 0.3, 0.2])
+    beam = Beam(
+        position=jnp.array([3.0 + 1.3, 0.0, 0.0]),  # in vacuum, rho = 1.3
+        direction=direction / jnp.linalg.norm(direction),
+        frequency=140e9,
+        mode="O",
+        power=1e6,
+    )
+    result = trace(tokamak_magnetic_configuration, profiles, beam)
+    bp = result.beam_profile
+
+    n_vec = np.asarray(bp.refractive_index)
+    b_vec = np.asarray(bp.magnetic_field)
+    ne = np.asarray(bp.electron_density)
+    b_hat = b_vec / np.linalg.norm(b_vec, axis=1, keepdims=True)
+    n_para = np.sum(n_vec * b_hat, axis=1)
+    n_perp = np.linalg.norm(n_vec - n_para[:, None] * b_hat, axis=1)
+    n2_dispersion = dispersion.dispersion_cold(
+        refractive_index_perp=n_perp,
+        refractive_index_para=n_para,
+        frequency=beam.frequency,
+        cyclotron_frequency=quantities.electron_cyclotron_frequency(
+            np.linalg.norm(b_vec, axis=1)
+        ),
+        plasma_frequency=quantities.electron_plasma_frequency(ne),
+        mode="O",
+    )
+    in_plasma = ne > 0.1
+    assert in_plasma.sum() > 5
+    h = np.sum(n_vec**2, axis=1) - np.asarray(n2_dispersion)
+    # Residuals near the plasma edge are relaxed over a few cm.
+    np.testing.assert_array_less(np.abs(h[in_plasma]), 2e-3)
 
 
 def _make_tokamak_beam_and_profiles(tokamak_magnetic_configuration):

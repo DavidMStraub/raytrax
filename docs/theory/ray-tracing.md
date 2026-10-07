@@ -30,7 +30,15 @@ $$\frac{d\boldsymbol{r}}{ds} = \left|\frac{\partial \mathcal H}{\partial \boldsy
 
 where $\boldsymbol{n}=\boldsymbol{k}c/\omega$.
 
-The gradients $\partial \mathcal H/\partial \boldsymbol{r}$ and $\partial \mathcal H/\partial \boldsymbol{n}$ are computed in Raytrax using automatic differentiation in the function `hamiltonian_gradients`, starting from a scalar Hamiltonian function.
+The gradients $\partial \mathcal H/\partial \boldsymbol{r}$ and $\partial \mathcal H/\partial \boldsymbol{n}$ are computed in Raytrax using automatic differentiation in the function `hamiltonian_value_and_gradients`, starting from a scalar Hamiltonian function.
+
+## Plasma Boundary
+
+If the electron density does not vanish at the plasma boundary, the ray has to be refracted at the plasma–vacuum interface. Raytrax continues the density profile beyond the last profile point with a smooth ramp to zero over $\Delta\rho = 0.02$, and adds a relaxation term to the equation for $\boldsymbol{n}$:
+
+$$\frac{d\boldsymbol{n}}{ds} = -\left|\frac{\partial \mathcal H}{\partial \boldsymbol{n}}\right|^{-1} \frac{\partial \mathcal H}{\partial \boldsymbol{r}} - \lambda\,\mathcal H \left|\frac{\partial \mathcal H}{\partial \boldsymbol{n}}\right|^{-2} \frac{\partial \mathcal H}{\partial \boldsymbol{n}}$$
+
+with $\lambda = 20\,\mathrm{m}^{-1}$. Along the ray, this gives $d\mathcal H/ds = -\lambda \mathcal H$, so the ray returns to the dispersion surface $\mathcal H = 0$ within a few centimeters if an integration step skips the ramp. The term vanishes on the dispersion surface and is smooth, so the trace remains differentiable.
 
 ## Cold Tracing
 
