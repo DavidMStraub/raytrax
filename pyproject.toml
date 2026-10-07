@@ -7,7 +7,7 @@ where = ["src"]
 include = ["raytrax*"]
 
 [tool.setuptools.package-data]
-raytrax = ["equilibrium/data/w7x.json"]
+raytrax = ["py.typed", "equilibrium/data/w7x.json"]
 
 [tool.setuptools_scm]
 
@@ -27,6 +27,8 @@ dependencies = [
   "matplotlib",
 ]
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE.md"]
 authors = [
   {name = "David Straub", email = "straub@protonmail.com"},
 ]
