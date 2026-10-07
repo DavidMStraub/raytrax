@@ -41,9 +41,9 @@ test = [
   "pre-commit",
 ]
 docs = [
-  "zensical",
+  "zensical==0.0.68",
   "mkdocstrings-python",
-  "mkdocs-gallery",
+  "mkdocs-gallery>=0.10.4,<0.11",
   "pyvista[jupyter]",
 ]
 plot3d = [
