@@ -5,15 +5,22 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Build distribution
         run: |
@@ -24,6 +31,7 @@ jobs:
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
 
   publish:
     needs: build
