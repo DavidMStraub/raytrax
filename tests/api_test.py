@@ -3,7 +3,12 @@
 import jax.numpy as jnp
 import numpy as np
 
-from raytrax.api import _bin_power_deposition, _next_power_of_two, trace
+from raytrax.api import (
+    _bin_power_deposition,
+    _deposition_stats,
+    _next_power_of_two,
+    trace,
+)
 from raytrax.equilibrium.interpolate import MagneticConfiguration
 from raytrax.physics import dispersion, quantities
 from raytrax.types import Beam, RadialProfiles, TracerSettings
@@ -200,6 +205,31 @@ def test_tracer_settings_max_arc_length_limits_trajectory(
     default_length = float(result_default.beam_profile.arc_length[-1])
     short_length = float(result_short.beam_profile.arc_length[-1])
     assert short_length < default_length
+
+
+def test_deposition_stats():
+    """Mean and std are weighted by the deposited power and normalised by its sum."""
+    rho = jnp.linspace(0.0, 1.0, 11)
+    dvolume_drho = jnp.ones(11)
+    edges = jnp.concatenate([rho[:1], 0.5 * (rho[:-1] + rho[1:]), rho[-1:]])
+    dV = jnp.diff(edges)
+
+    # All power in the bin at rho = 0.3: mean is 0.3, independent of the amount.
+    for amount in (1e-6, 0.5):
+        power_binned = jnp.zeros(11).at[3].set(amount / dV[3])
+        mean, std = _deposition_stats(power_binned, rho, dvolume_drho)
+        np.testing.assert_allclose(float(mean), 0.3, atol=1e-12)
+        assert float(std) < 1e-6
+
+    # Equal power at rho = 0.2 and 0.6.
+    power_binned = jnp.zeros(11).at[2].set(0.1 / dV[2]).at[6].set(0.1 / dV[6])
+    mean, std = _deposition_stats(power_binned, rho, dvolume_drho)
+    np.testing.assert_allclose(float(mean), 0.4, atol=1e-12)
+    np.testing.assert_allclose(float(std), 0.2, atol=1e-12)
+
+    # No deposited power.
+    mean, std = _deposition_stats(jnp.zeros(11), rho, dvolume_drho)
+    assert np.isnan(float(mean)) and np.isnan(float(std))
 
 
 def test_bin_power_deposition():
