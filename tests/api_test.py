@@ -3,7 +3,12 @@
 import jax.numpy as jnp
 import numpy as np
 
-from raytrax.api import _bin_power_deposition, _next_power_of_two, trace
+from raytrax.api import (
+    _bin_power_deposition,
+    _deposition_stats,
+    _next_power_of_two,
+    trace,
+)
 from raytrax.equilibrium.interpolate import MagneticConfiguration
 from raytrax.physics import dispersion, quantities
 from raytrax.types import Beam, RadialProfiles, TracerSettings
@@ -200,6 +205,55 @@ def test_tracer_settings_max_arc_length_limits_trajectory(
     default_length = float(result_default.beam_profile.arc_length[-1])
     short_length = float(result_short.beam_profile.arc_length[-1])
     assert short_length < default_length
+
+
+def test_deposition_stats():
+    """Mean and std are weighted by the deposited power and normalised by its sum."""
+    rho = jnp.linspace(0.0, 1.0, 11)
+    dvolume_drho = jnp.ones(11)
+    edges = jnp.concatenate([rho[:1], 0.5 * (rho[:-1] + rho[1:]), rho[-1:]])
+    dV = jnp.diff(edges)
+
+    # All power in the bin at rho = 0.3: mean is 0.3, independent of the amount.
+    for amount in (1e-6, 0.5):
+        power_binned = jnp.zeros(11).at[3].set(amount / dV[3])
+        mean, std = _deposition_stats(power_binned, rho, dvolume_drho)
+        np.testing.assert_allclose(float(mean), 0.3, atol=1e-12)
+        assert float(std) < 1e-6
+
+    # Equal power at rho = 0.2 and 0.6.
+    power_binned = jnp.zeros(11).at[2].set(0.1 / dV[2]).at[6].set(0.1 / dV[6])
+    mean, std = _deposition_stats(power_binned, rho, dvolume_drho)
+    np.testing.assert_allclose(float(mean), 0.4, atol=1e-12)
+    np.testing.assert_allclose(float(std), 0.2, atol=1e-12)
+
+    # No deposited power.
+    mean, std = _deposition_stats(jnp.zeros(11), rho, dvolume_drho)
+    assert np.isnan(float(mean)) and np.isnan(float(std))
+
+
+def test_deposition_stats_with_power_at_axis():
+    """Power deposited in the axis bin, where dV/drho = 0, enters the statistics."""
+    rho_grid = jnp.linspace(0.0, 1.0, 11)
+    dvolume_drho = 2.0 * rho_grid  # dV/drho vanishes on the axis
+
+    # Ray segment passing through the axis: 0.15 -> 0.0 -> 0.15.
+    rho_trajectory = jnp.array([0.15, 0.1, 0.05, 0.0, 0.05, 0.1, 0.15])
+    optical_depth = jnp.linspace(0.0, 1.0, 7)
+    arc_length = jnp.linspace(0.0, 0.3, 7)
+    power_binned = _bin_power_deposition(
+        rho_grid, dvolume_drho, arc_length, rho_trajectory, optical_depth
+    )
+    mean, std = _deposition_stats(power_binned, rho_grid, dvolume_drho)
+    assert np.isfinite(float(mean)) and np.isfinite(float(std))
+    # Uniform deposition in rho on [0, 0.15]; bins centred at 0, 0.1 (0.05 width each
+    # on [0, 0.05] and [0.05, 0.15]) give the mean (0.05 * 0 + 0.1 * 0.1) / 0.15.
+    np.testing.assert_allclose(float(mean), 0.1 * 0.1 / 0.15, rtol=0.05)
+
+    # All power in the axis bin.
+    power_axis = jnp.zeros(11).at[0].set(0.5 / 1e-30)
+    mean, _ = _deposition_stats(power_axis, rho_grid, dvolume_drho)
+    np.testing.assert_allclose(float(mean), 0.0, atol=1e-12)
 
 
 def test_bin_power_deposition():

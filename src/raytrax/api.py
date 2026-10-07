@@ -39,6 +39,21 @@ def _next_power_of_two(n: int) -> int:
     return max(4, 1 << max(0, (n - 1).bit_length()))
 
 
+_MIN_BIN_VOLUME = 1e-30
+"""Lower bound for the volume of a radial bin (the bin at the axis has dV/drho = 0)."""
+
+
+def _bin_volumes(
+    rho_grid: jt.Float[jax.Array, " nrho"],
+    dvolume_drho: jt.Float[jax.Array, " nrho"],
+) -> jt.Float[jax.Array, " nrho"]:
+    """Volume of the radial bins centred on ``rho_grid``, floored at ``_MIN_BIN_VOLUME``."""
+    edges = jnp.concatenate(
+        [rho_grid[:1], 0.5 * (rho_grid[:-1] + rho_grid[1:]), rho_grid[-1:]]
+    )
+    return jnp.maximum(dvolume_drho * jnp.diff(edges), _MIN_BIN_VOLUME)
+
+
 def _bin_power_deposition(
     rho_grid: jt.Float[jax.Array, " nrho"],
     dvolume_drho: jt.Float[jax.Array, " nrho"],
@@ -136,31 +151,37 @@ def _bin_power_deposition(
 
     power_per_bin = dP @ weights  # (nrho,)
 
-    dV = dvolume_drho * (bin_hi - bin_lo)
-    result = power_per_bin / jnp.maximum(dV, 1e-30)
+    result = power_per_bin / _bin_volumes(rho_grid, dvolume_drho)
     # Mask to zero for the degenerate single-point case (s_max=0).
     return jnp.where(is_degenerate, jnp.zeros_like(result), result)
+
+
+_MIN_DEPOSITED_FRACTION = 1e-12
+"""Deposited power fraction below which the deposition statistics are undefined."""
 
 
 def _deposition_stats(
     power_binned: jt.Float[jax.Array, " nrho"],
     rho_1d: jt.Float[jax.Array, " nrho"],
     dvolume_drho: jt.Float[jax.Array, " nrho"],
-    absorbed_fraction: jt.Float[jax.Array, ""],
 ) -> tuple[jt.Float[jax.Array, ""], jt.Float[jax.Array, ""]]:
-    """Compute flux-weighted mean and standard deviation of power deposition in ρ.
+    """Compute power-weighted mean and standard deviation of power deposition in ρ.
 
-    Returns (rho_mean, rho_std), both differentiable.
+    Returns (rho_mean, rho_std), both differentiable, or NaN if no power is
+    deposited.
     """
-    edges = jnp.concatenate([rho_1d[:1], 0.5 * (rho_1d[:-1] + rho_1d[1:]), rho_1d[-1:]])
-    dV = dvolume_drho * jnp.diff(edges)
-    power_per_bin = power_binned * dV  # fraction of total power in each bin
-    safe_abs = jnp.maximum(absorbed_fraction, 1e-30)
-    rho_mean = jnp.sum(rho_1d * power_per_bin) / safe_abs
-    rho_std = jnp.sqrt(
-        jnp.maximum(jnp.sum((rho_1d - rho_mean) ** 2 * power_per_bin) / safe_abs, 0.0)
+    # fraction of total power in each bin
+    power_per_bin = power_binned * _bin_volumes(rho_1d, dvolume_drho)
+    total = jnp.sum(power_per_bin)
+    has_power = total > _MIN_DEPOSITED_FRACTION
+    safe_total = jnp.where(has_power, total, 1.0)
+    rho_mean = jnp.sum(rho_1d * power_per_bin) / safe_total
+    rho_var = jnp.sum((rho_1d - rho_mean) ** 2 * power_per_bin) / safe_total
+    rho_std = jnp.sqrt(jnp.maximum(rho_var, 1e-30))
+    return (
+        jnp.where(has_power, rho_mean, jnp.nan),
+        jnp.where(has_power, rho_std, jnp.nan),
     )
-    return rho_mean, rho_std
 
 
 def _run_trace(
@@ -248,7 +269,6 @@ def trace(
             power_binned,
             magnetic_configuration.rho_1d,
             magnetic_configuration.dvolume_drho,
-            absorbed_fraction,
         )
         return TraceResult(
             beam_profile=beam_profile,
@@ -296,7 +316,6 @@ def trace(
         power_binned,
         magnetic_configuration.rho_1d,
         magnetic_configuration.dvolume_drho,
-        absorbed_fraction,
     )
     return TraceResult(
         beam_profile=beam_profile,
