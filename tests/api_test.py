@@ -232,6 +232,30 @@ def test_deposition_stats():
     assert np.isnan(float(mean)) and np.isnan(float(std))
 
 
+def test_deposition_stats_with_power_at_axis():
+    """Power deposited in the axis bin, where dV/drho = 0, enters the statistics."""
+    rho_grid = jnp.linspace(0.0, 1.0, 11)
+    dvolume_drho = 2.0 * rho_grid  # dV/drho vanishes on the axis
+
+    # Ray segment passing through the axis: 0.15 -> 0.0 -> 0.15.
+    rho_trajectory = jnp.array([0.15, 0.1, 0.05, 0.0, 0.05, 0.1, 0.15])
+    optical_depth = jnp.linspace(0.0, 1.0, 7)
+    arc_length = jnp.linspace(0.0, 0.3, 7)
+    power_binned = _bin_power_deposition(
+        rho_grid, dvolume_drho, arc_length, rho_trajectory, optical_depth
+    )
+    mean, std = _deposition_stats(power_binned, rho_grid, dvolume_drho)
+    assert np.isfinite(float(mean)) and np.isfinite(float(std))
+    # Uniform deposition in rho on [0, 0.15]; bins centred at 0, 0.1 (0.05 width each
+    # on [0, 0.05] and [0.05, 0.15]) give the mean (0.05 * 0 + 0.1 * 0.1) / 0.15.
+    np.testing.assert_allclose(float(mean), 0.1 * 0.1 / 0.15, rtol=0.05)
+
+    # All power in the axis bin.
+    power_axis = jnp.zeros(11).at[0].set(0.5 / 1e-30)
+    mean, _ = _deposition_stats(power_axis, rho_grid, dvolume_drho)
+    np.testing.assert_allclose(float(mean), 0.0, atol=1e-12)
+
+
 def test_bin_power_deposition():
     """Test the _bin_power_deposition helper function."""
     rho_grid = jnp.linspace(0.0, 1.0, 11)  # 11 points: 0.0, 0.1, ..., 1.0
