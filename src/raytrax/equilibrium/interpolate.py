@@ -412,10 +412,11 @@ def build_electron_density_profile_interpolator(
     r"""Build electron density profile interpolator.
 
     Beyond the last grid point $\rho_\mathrm{edge}$ (normally the LCFS), the
-    density decreases smoothly from $n_e(\rho_\mathrm{edge})$ to zero over a thin
-    layer of width $\Delta\rho = 0.02$ (cubic smoothstep), so that rays are
-    refracted at the plasma–vacuum interface for profiles with a finite edge
-    density. Inside the grid the profile is unchanged.
+    density decreases from $n_e(\rho_\mathrm{edge})$ to zero over a thin layer of
+    width $\Delta\rho = 0.02$, so that rays are refracted at the plasma–vacuum
+    interface for profiles with a finite edge density. The ramp is sampled from a
+    cubic smoothstep and linearly interpolated, like the profile inside the grid,
+    which is unchanged.
 
     Args:
         radial_profiles: The radial profiles.
