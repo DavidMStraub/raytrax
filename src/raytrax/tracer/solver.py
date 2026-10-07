@@ -142,6 +142,13 @@ def _y_to_state(
     )
 
 
+_CONSTRAINT_RELAXATION_RATE = 20.0
+"""Rate (1/m) at which deviations from the dispersion surface H = 0 are relaxed.
+
+Small enough that the relaxation stays stable for explicit steps up to the default
+maximum step size (rate * 0.05 m = 1)."""
+
+
 def _right_hand_side(
     s: float | int | jax.Array,
     y: jt.Float[jax.Array, " n "],
@@ -168,10 +175,10 @@ def _right_hand_side(
     def eval_rho(pos):
         return _eval_rho(pos, interpolators, nfp)
 
-    # Compute both Hamiltonian gradients in a single backward pass,
+    # Compute H and both gradients in a single pass,
     # reusing B-field, rho, and ne from the forward pass (has_aux=True).
-    (hamiltonian_gradient_r, hamiltonian_gradient_n), hamiltonian_aux = (
-        hamiltonian.hamiltonian_gradients(
+    (h_value, hamiltonian_aux), (hamiltonian_gradient_r, hamiltonian_gradient_n) = (
+        hamiltonian.hamiltonian_value_and_gradients(
             state.position,
             state.refractive_index,
             eval_B,
@@ -184,7 +191,12 @@ def _right_hand_side(
     norm = jnp.linalg.norm(hamiltonian_gradient_n)
 
     dr_ds = hamiltonian_gradient_n / norm
-    dn_ds = -hamiltonian_gradient_r / norm
+    # The second term relaxes deviations from the dispersion surface,
+    # dH/ds = -lambda * H, e.g. after a step across the density ramp at the edge.
+    dn_ds = (
+        -hamiltonian_gradient_r / norm
+        - _CONSTRAINT_RELAXATION_RATE * h_value * hamiltonian_gradient_n / norm**2
+    )
 
     te = interpolators.electron_temperature(hamiltonian_aux.rho)
     dtau_ds = absorption.absorption_coefficient_conditional(

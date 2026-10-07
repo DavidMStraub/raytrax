@@ -17,6 +17,7 @@ The following is a list of current limitations of Raytrax.
 ## Physics
 
 - For tracing, only the cold plasma dielectric tensor is implemented so far.
+- The power flux in the denominator of the absorption coefficient is evaluated with the cold dielectric tensor. This is least accurate at the fundamental harmonic, in particular for X mode.
 - Electron cyclotron emission (ECE) is not yet implemented.
 - Electron cyclotron current drive (ECCD) is not yet implemented.
 

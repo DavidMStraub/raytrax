@@ -8,7 +8,6 @@ to cylindrical coordinates ($r$, $\phi$, $z$).
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING
@@ -403,7 +402,8 @@ def build_rho_interpolator(
     )
 
 
-_NE_EDGE_WARN_THRESHOLD = 1e-3  # 10^17 m^-3, effectively zero for fusion plasmas
+_VACUUM_RAMP_WIDTH = 0.02  # width in rho of the density ramp beyond the profile grid
+_VACUUM_RAMP_POINTS = 9  # number of knots resolving the ramp
 
 
 def build_electron_density_profile_interpolator(
@@ -411,34 +411,27 @@ def build_electron_density_profile_interpolator(
 ) -> interpax.Interpolator1D:
     r"""Build electron density profile interpolator.
 
+    Beyond the last grid point $\rho_\mathrm{edge}$ (normally the LCFS), the
+    density decreases smoothly from $n_e(\rho_\mathrm{edge})$ to zero over a thin
+    layer of width $\Delta\rho = 0.02$ (cubic smoothstep), so that rays are
+    refracted at the plasma–vacuum interface for profiles with a finite edge
+    density. Inside the grid the profile is unchanged.
+
     Args:
-        radial_profiles: The radial profiles.  If the electron density does not
-            taper to zero at $\rho = 1$, consider passing
-            ``radial_profiles.with_zero_density_at_boundary(0.1)`` instead to avoid a
-            hard discontinuity at the plasma–vacuum interface.
+        radial_profiles: The radial profiles.
 
     Returns:
         An interpax.Interpolator1D that maps rho to electron density.
     """
-    try:
-        arr = radial_profiles.electron_density[-1]
-        ne_edge = float(arr)
-        if ne_edge > _NE_EDGE_WARN_THRESHOLD:
-            warnings.warn(
-                f"Electron density at the LCFS (rho=1) is {ne_edge:.3g} \u00d7 10\u00b2\u2070 m\u207b\u00b3, "
-                "which is not zero. The extrapolator hard-clamps ne=0 outside the LCFS, "
-                "creating a discontinuity that can cause spurious ray behaviour. "
-                "Consider using radial_profiles.with_zero_density_at_boundary(0.1) to smoothly "
-                "taper the density to zero over the outermost 10% of the minor radius.",
-                UserWarning,
-                stacklevel=2,
-            )
-    except (jax.errors.ConcretizationTypeError, TypeError):
-        pass
+    rho = radial_profiles.rho
+    ne = radial_profiles.electron_density
+    s = jnp.linspace(0.0, 1.0, _VACUUM_RAMP_POINTS + 1)[1:]
+    rho_ramp = rho[-1] + _VACUUM_RAMP_WIDTH * s
+    ne_ramp = ne[-1] * (1.0 - s**2 * (3.0 - 2.0 * s))
 
     return interpax.Interpolator1D(
-        x=radial_profiles.rho,
-        f=radial_profiles.electron_density,
+        x=jnp.concatenate([rho, rho_ramp]),
+        f=jnp.concatenate([ne, ne_ramp]),
         method="linear",
         extrap=0.0,
     )

@@ -236,10 +236,6 @@ class RadialProfiles:
         where $\rho_1 = \rho_{\max} - \text{boundary\_layer\_width}$
         (in $s = \rho^2$ space).
 
-        Use this whenever $n_e(\rho{=}1) > 0$ to avoid a hard
-        discontinuity at the plasma–vacuum interface that would cause spurious
-        ray behaviour.
-
         Args:
             boundary_layer_width: Width of the taper in $\rho$ units
                 (fraction of the minor radius).  Must satisfy
