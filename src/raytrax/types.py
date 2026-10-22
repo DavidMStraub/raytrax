@@ -201,6 +201,12 @@ class TracerSettings:
     max_arc_length: float = 20.0
     """Maximum arc length to integrate in metres before the solver gives up."""
 
+    constraint_relaxation_rate: float = 20.0
+    """Rate (1/m) at which deviations from the dispersion surface H = 0 are relaxed,
+    dH/ds = -rate * H. Small enough that the relaxation stays stable for explicit
+    steps up to the default maximum step size (rate * 0.05 m = 1). Zero disables
+    the relaxation."""
+
 
 @jax.tree_util.register_dataclass
 @dataclass

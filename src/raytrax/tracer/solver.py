@@ -142,13 +142,6 @@ def _y_to_state(
     )
 
 
-_CONSTRAINT_RELAXATION_RATE = 20.0
-"""Rate (1/m) at which deviations from the dispersion surface H = 0 are relaxed.
-
-Small enough that the relaxation stays stable for explicit steps up to the default
-maximum step size (rate * 0.05 m = 1)."""
-
-
 def _right_hand_side(
     s: float | int | jax.Array,
     y: jt.Float[jax.Array, " n "],
@@ -165,7 +158,7 @@ def _right_hand_side(
     ``(setting, interpolators, nfp, tracer_settings)`` where ``interpolators`` is an
     :class:`Interpolators` pytree.
     """
-    setting, interpolators, nfp, _ = args
+    setting, interpolators, nfp, tracer_settings = args
 
     state = _y_to_state(y, s)
 
@@ -195,7 +188,10 @@ def _right_hand_side(
     # dH/ds = -lambda * H, e.g. after a step across the density ramp at the edge.
     dn_ds = (
         -hamiltonian_gradient_r / norm
-        - _CONSTRAINT_RELAXATION_RATE * h_value * hamiltonian_gradient_n / norm**2
+        - tracer_settings.constraint_relaxation_rate
+        * h_value
+        * hamiltonian_gradient_n
+        / norm**2
     )
 
     te = interpolators.electron_temperature(hamiltonian_aux.rho)
