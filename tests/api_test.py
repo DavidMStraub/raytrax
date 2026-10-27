@@ -1,7 +1,11 @@
 """Tests for the raytrax.api module."""
 
+import functools
+
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from raytrax.api import (
     _bin_power_deposition,
@@ -188,6 +192,46 @@ def test_tracer_settings_non_default_runs_under_jit(tokamak_magnetic_configurati
     assert jnp.isfinite(result.optical_depth)
 
 
+def test_step_limit_is_reported_instead_of_silently_truncating(
+    tokamak_magnetic_configuration,
+):
+    """A trace that runs out of ODE steps is flagged instead of reporting ~0 power.
+
+    The X-mode ray at the second harmonic is fully absorbed in about 20 steps.
+    """
+    _, profiles = _make_tokamak_beam_and_profiles(tokamak_magnetic_configuration)
+    beam = Beam(
+        position=jnp.array([3.8, 0.0, 0.0]),
+        direction=jnp.array([-1.0, 0.0, 0.0]),
+        frequency=140e9,
+        mode="X",
+        power=1e6,
+    )
+    short = TracerSettings(max_steps=16)
+
+    with pytest.warns(RuntimeWarning, match="max_steps=16"):
+        truncated = trace(
+            tokamak_magnetic_configuration, profiles, beam, settings=short
+        )
+    assert bool(truncated.incomplete)
+    assert truncated.beam_profile.arc_length.shape == (17,)
+
+    # trim=False must stay traceable: the flag is a traced array, not a Python bool.
+    padded = jax.jit(functools.partial(trace, trim=False, settings=short))(
+        tokamak_magnetic_configuration, profiles, beam
+    )
+    assert bool(padded.incomplete)
+
+    complete = trace(
+        tokamak_magnetic_configuration,
+        profiles,
+        beam,
+        settings=TracerSettings(max_steps=64),
+    )
+    assert not bool(complete.incomplete)
+    assert float(complete.absorbed_power_fraction) > 0.99
+
+
 def test_tracer_settings_max_arc_length_limits_trajectory(
     tokamak_magnetic_configuration,
 ):
@@ -195,12 +239,15 @@ def test_tracer_settings_max_arc_length_limits_trajectory(
     beam, profiles = _make_tokamak_beam_and_profiles(tokamak_magnetic_configuration)
 
     result_default = trace(tokamak_magnetic_configuration, profiles, beam)
-    result_short = trace(
-        tokamak_magnetic_configuration,
-        profiles,
-        beam,
-        settings=TracerSettings(max_arc_length=0.5),
-    )
+    with pytest.warns(RuntimeWarning, match="max_arc_length"):
+        result_short = trace(
+            tokamak_magnetic_configuration,
+            profiles,
+            beam,
+            settings=TracerSettings(max_arc_length=0.5),
+        )
+    assert bool(result_short.incomplete)
+    assert not bool(result_default.incomplete)
 
     default_length = float(result_default.beam_profile.arc_length[-1])
     short_length = float(result_short.beam_profile.arc_length[-1])

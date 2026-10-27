@@ -38,8 +38,9 @@ class Interpolators:
 class TraceBuffers:
     """Raw output from the JIT-compiled trace, before trimming padded buffers.
 
-    All arrays are padded to max_steps (4096). Invalid entries beyond the
-    last integration step are inf/NaN and must be trimmed by the caller.
+    All arrays are padded to `TracerSettings.max_steps + 1` entries. Invalid
+    entries beyond the last integration step are inf/NaN and must be trimmed by
+    the caller.
     """
 
     arc_length: jt.Float[jax.Array, " nsteps"]
@@ -50,3 +51,6 @@ class TraceBuffers:
     electron_temperature: jt.Float[jax.Array, " nsteps"]
     absorption_coefficient: jt.Float[jax.Array, " nsteps"]
     linear_power_density: jt.Float[jax.Array, " nsteps"]
+    incomplete: jt.Bool[jax.Array, ""]
+    """Whether the solve ended without a termination event (ray left the plasma,
+    was absorbed or left the domain)."""

@@ -63,8 +63,8 @@ profiles = RadialProfiles(
 # ─── 3. Loss functions defined on BeamProfile ──────────────────────────────────
 #
 # trace(..., trim=False) returns a TraceResult whose beam_profile contains padded
-# arrays (4097 slots: t0 + up to 4096 ODE steps). All fields are differentiable
-# w.r.t. beam.position and beam.direction. Padded entries have
+# arrays (TracerSettings.max_steps + 1 slots: t0 + one per ODE step). All fields
+# are differentiable w.r.t. beam.position and beam.direction. Padded entries have
 # linear_power_density=0, so jnp.max and weighted jnp.sum are correct without
 # any explicit trimming.
 #

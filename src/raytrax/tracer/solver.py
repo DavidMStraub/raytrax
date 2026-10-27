@@ -267,7 +267,7 @@ def _solve(
         saveat=diffrax.SaveAt(steps=True, t0=True),
         stepsize_controller=stepsize_controller,
         event=_event,
-        max_steps=4096,
+        max_steps=tracer_settings.max_steps,
         throw=False,
     )
 
@@ -329,9 +329,9 @@ def trace_jitted(
 
     Returns ``(TraceBuffers, n_valid)`` where ``n_valid`` is the number of
     valid (finite) arc-length entries.  TraceBuffers arrays have shape
-    ``(max_steps + 1,)``; entries after the event are left as ``inf`` by diffrax
-    (unvisited SaveAt slots).  The caller trims to the first ``n_valid``
-    entries.
+    ``(tracer_settings.max_steps + 1,)``; entries after the event are left as
+    ``inf`` by diffrax (unvisited SaveAt slots).  The caller trims to the first
+    ``n_valid`` entries.
     """
     sol = _solve(position, direction, setting, interpolators, nfp, tracer_settings)
     ts = cast(jax.Array, sol.ts)
@@ -348,6 +348,7 @@ def trace_jitted(
             electron_temperature=diag.electron_temperature,
             absorption_coefficient=diag.absorption_coefficient,
             linear_power_density=diag.linear_power_density,
+            incomplete=jnp.asarray(sol.result != diffrax.RESULTS.event_occurred),
         ),
         n_valid,
     )

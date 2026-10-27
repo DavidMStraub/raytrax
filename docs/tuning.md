@@ -6,7 +6,7 @@ icon: lucide/settings-2
 
 ## Solver Settings
 
-The ODE solver used for ray tracing has four tunable parameters, exposed via [`TracerSettings`][raytrax.types.TracerSettings]. The defaults are chosen to work well for typical ECRH scenarios in metre-scale devices:
+The ODE solver used for ray tracing has five tunable parameters, exposed via [`TracerSettings`][raytrax.types.TracerSettings]. The defaults are chosen to work well for typical ECRH scenarios in metre-scale devices:
 
 ```python
 import raytrax
@@ -16,12 +16,13 @@ settings = raytrax.TracerSettings(
     absolute_tolerance=1e-6,  # PID controller atol
     max_step_size=0.05,  # metres
     max_arc_length=20.0,  # metres
+    max_steps=4096,  # step budget, sizes the output buffers
 )
 
 result = raytrax.trace(mag_conf, profiles, beam, settings=settings)
 ```
 
-Because all four fields are ordinary JAX values (not static compile-time constants), **changing them does not trigger a recompilation** (see below).
+The four float fields are ordinary JAX values (not static compile-time constants), so **changing them does not trigger a recompilation**. `max_steps` is the exception: it sizes the padded output buffers, so changing it does trigger a recompilation (see below).
 
 ### When to Adjust the Settings
 
@@ -30,6 +31,8 @@ Because all four fields are ordinary JAX values (not static compile-time constan
 **`relative_tolerance` / `absolute_tolerance`** control the error estimate the PID controller tries to satisfy per step. Tightening them (e.g. `rtol=1e-6`) improves accuracy but increases the number of steps. The defaults are sufficient for power deposition profiles; gradient-based optimisation may benefit from tighter tolerances.
 
 **`max_arc_length`** is a safety cutoff. Rays that haven't terminated (by leaving the plasma or being absorbed) are stopped at this arc length. 20 m is generous for any current fusion device; you would only need to lower it to speed up debugging of misconfigured inputs, or raise it for very large devices.
+
+**`max_steps`** is the step budget of the ODE solver and sizes the output buffers (`max_steps + 1` entries per trajectory quantity with `trim=False`). If a ray needs more steps, typically because of a small `max_step_size` or tight tolerances, the trace stops early: `TraceResult.incomplete` is set and, with `trim=True`, `trace` emits a `RuntimeWarning` naming the cause. The absorbed power of such a trace is underestimated, so raise `max_steps` until the flag is no longer set. Reaching `max_arc_length` sets the same flag.
 
 ## JAX Compilation
 
@@ -47,6 +50,7 @@ JAX recompiles whenever the *structure* of the inputs changes. For Raytrax, this
 | Profile values (same `rho` grid) | No |
 | Magnetic field values (same grid shape) | No |
 | [`TracerSettings`][raytrax.types.TracerSettings] tolerances or step sizes | No |
+| `TracerSettings.max_steps` | **Yes** |
 | `rho` grid size (e.g. 40 → 80 points) | **Yes** |
 | Magnetic field grid shape | **Yes** |
 | Wave mode (`"X"` ↔ `"O"`) | **Yes** |

@@ -176,6 +176,12 @@ class TraceResult:
     deposition_rho_std: jt.Float[jax.Array, ""]
     r"""Power-weighted standard deviation of $\rho$ of the deposition; NaN if no power is deposited."""
 
+    incomplete: jt.Bool[jax.Array, ""]
+    """Whether the ODE solve stopped before the ray left the plasma or was absorbed:
+    it ran out of steps (`TracerSettings.max_steps`), reached
+    `TracerSettings.max_arc_length`, or the solver failed. If set, the absorbed
+    power may be underestimated."""
+
 
 @jax.tree_util.register_dataclass
 @dataclass(frozen=True)
@@ -183,9 +189,8 @@ class TracerSettings:
     """Settings for the ray tracing ODE solver.
 
     All float fields are JAX-traceable (changing them does **not** trigger
-    recompilation). Only ``max_steps`` in the solver — which controls static
-    buffer sizes — would require recompilation, and is intentionally omitted
-    here for that reason.
+    recompilation). ``max_steps`` is static because it sizes the output buffers,
+    so changing it triggers a recompilation.
     """
 
     relative_tolerance: float = 1e-4
@@ -206,6 +211,12 @@ class TracerSettings:
     dH/ds = -rate * H. Small enough that the relaxation stays stable for explicit
     steps up to the default maximum step size (rate * 0.05 m = 1). Zero disables
     the relaxation."""
+
+    max_steps: int = dataclass_field(default=4096, metadata={"static": True})
+    """Maximum number of ODE steps. Sizes the padded output buffers
+    (`max_steps + 1` entries), so changing it triggers a recompilation. If the
+    budget runs out before the ray terminates, `TraceResult.incomplete` is set;
+    raise it when using a small `max_step_size` or tight tolerances."""
 
 
 @jax.tree_util.register_dataclass
