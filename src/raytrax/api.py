@@ -56,6 +56,7 @@ def _bin_volumes(
     return jnp.maximum(dvolume_drho * jnp.diff(edges), _MIN_BIN_VOLUME)
 
 
+@jax.jit
 def _bin_power_deposition(
     rho_grid: jt.Float[jax.Array, " nrho"],
     dvolume_drho: jt.Float[jax.Array, " nrho"],
@@ -162,6 +163,7 @@ _MIN_DEPOSITED_FRACTION = 1e-12
 """Deposited power fraction below which the deposition statistics are undefined."""
 
 
+@jax.jit
 def _deposition_stats(
     power_binned: jt.Float[jax.Array, " nrho"],
     rho_1d: jt.Float[jax.Array, " nrho"],
@@ -186,6 +188,7 @@ def _deposition_stats(
     )
 
 
+@jax.jit
 def _run_trace(
     magnetic_configuration: MagneticConfiguration,
     radial_profiles: RadialProfiles,
