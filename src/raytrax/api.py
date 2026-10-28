@@ -122,37 +122,48 @@ def _bin_power_deposition(
     # --- 3. Exact overlap-based binning on dense samples -------------------
     # dP_i = exp(-τ_i) − exp(-τ_{i+1}), clamped to ≥ 0.
     dP = jnp.maximum(jnp.exp(-tau_fine[:-1]) - jnp.exp(-tau_fine[1:]), 0.0)
-
-    edges = jnp.concatenate(
-        [rho_grid[:1], 0.5 * (rho_grid[:-1] + rho_grid[1:]), rho_grid[-1:]]
-    )
-    bin_lo = edges[:-1]  # (nrho,)
-    bin_hi = edges[1:]  # (nrho,)
-
-    rho_a = rho_fine[:-1]  # (_N_INTERP-1,)
-    rho_b = rho_fine[1:]
-    seg_lo = jnp.minimum(rho_a, rho_b)[:, None]
-    seg_hi = jnp.maximum(rho_a, rho_b)[:, None]
-
-    overlap = jnp.maximum(
-        0.0, jnp.minimum(seg_hi, bin_hi) - jnp.maximum(seg_lo, bin_lo)
-    )  # (_N_INTERP-1, nrho)
-
-    seg_len = (seg_hi - seg_lo)[:, 0]
-
-    # For zero-length (tangential) segments, fall back to a hat kernel at the
-    # midpoint so weights remain finite and differentiable.
+    n_bins = rho_grid.shape[0]
     bin_width = rho_grid[1] - rho_grid[0]
-    rho_mid = 0.5 * (rho_a + rho_b)
-    hat = jnp.maximum(
-        0.0, 1.0 - jnp.abs(rho_mid[:, None] - rho_grid[None, :]) / bin_width
+    rho_a = rho_fine[:-1]
+    rho_b = rho_fine[1:]
+    seg_len = jnp.abs(rho_b - rho_a)
+    has_len = seg_len > 0
+
+    # Each segment spreads dP uniformly over its rho range. The bins are uniform and
+    # centred on rho_grid, so in u = (rho - rho_0) / Δρ + 1/2 bin k is [k, k + 1):
+    # a segment fills its first and last bin partially and the bins between fully,
+    # which costs O(segments + bins) instead of a dense (segment × bin) matrix.
+    # Every term is at most dP, so no large partial sums cancel.
+    def to_u(rho: jax.Array) -> jax.Array:
+        return jnp.clip((rho - rho_grid[0]) / bin_width + 0.5, 0.5, n_bins - 0.5)
+
+    u_lo = to_u(jnp.minimum(rho_a, rho_b))
+    u_hi = to_u(jnp.maximum(rho_a, rho_b))
+    first = jnp.minimum(jnp.floor(u_lo).astype(int), n_bins - 1)
+    last = jnp.minimum(jnp.floor(u_hi).astype(int), n_bins - 1)
+    per_bin = jnp.where(has_len, dP * bin_width / jnp.where(has_len, seg_len, 1.0), 0.0)
+    same = first == last
+    power_per_bin = (
+        jnp.zeros(n_bins)
+        .at[first]
+        .add(per_bin * jnp.where(same, u_hi - u_lo, first + 1 - u_lo))
+        .at[last]
+        .add(jnp.where(same, 0.0, per_bin * (u_hi - last)))
     )
-    hat = hat / jnp.maximum(hat.sum(axis=1, keepdims=True), 1e-30)
+    full = jnp.where(last > first + 1, per_bin, 0.0)
+    power_per_bin += jnp.cumsum(
+        jnp.zeros(n_bins + 1).at[first + 1].add(full).at[last].add(-full)
+    )[:-1]
 
-    overlap_weights = overlap / jnp.where(seg_len > 0, seg_len, 1.0)[:, None]
-    weights = jnp.where((seg_len > 0)[:, None], overlap_weights, hat)
-
-    power_per_bin = dP @ weights  # (nrho,)
+    # Zero-length (tangential) segments go to the two nearest grid points with a
+    # hat kernel, renormalized over the points that exist, so weights stay finite.
+    v = (0.5 * (rho_a + rho_b) - rho_grid[0]) / bin_width
+    left = jnp.floor(v).astype(int)
+    hat_index = jnp.stack([left, left + 1])
+    hat_weight = jnp.stack([1 - (v - left), v - left])
+    hat_weight = jnp.where((hat_index >= 0) & (hat_index < n_bins), hat_weight, 0.0)
+    hat_power = jnp.where(has_len, 0.0, dP) / jnp.maximum(hat_weight.sum(axis=0), 1e-30)
+    power_per_bin = power_per_bin.at[hat_index].add(hat_weight * hat_power, mode="drop")
 
     result = power_per_bin / _bin_volumes(rho_grid, dvolume_drho)
     # Mask to zero for the degenerate single-point case (s_max=0).
