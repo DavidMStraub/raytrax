@@ -52,7 +52,19 @@ def absorption_coefficient_conditional(
     """
     temperature_condition = electron_temperature_keV > 0.01
     density_condition = electron_density_1e20_per_m3 > 0.0
-    active = temperature_condition & density_condition
+    # Off resonance alpha is exactly zero; deciding that from a few scalars skips
+    # the dielectric tensor, polarization and power flux, most of the cost.
+    active = (
+        temperature_condition
+        & density_condition
+        & _any_harmonic_resonant(
+            refractive_index,
+            magnetic_field,
+            electron_temperature_keV,
+            frequency,
+            max_harmonic,
+        )
+    )
 
     # lax.cond VJP evaluates both branches; clamp te/ne so the true-branch VJP
     # never sees near-zero values that cause NaN in the Maxwell-Juettner formula.
@@ -72,6 +84,52 @@ def absorption_coefficient_conditional(
         ),
         lambda: 0.0,
     )
+
+
+def _resonance_circle(
+    nY: ScalarFloat, n_para: ScalarFloat, thermal_velocity: ScalarFloat
+) -> tuple[ScalarFloat, ScalarFloat, ScalarBool]:
+    """Ends of the resonance circle in u_∥ and whether it reaches the bulk of the distribution."""
+    denom = 1 - n_para**2
+    # 1e-30 floor: at disc=0 (exact 2nd-harmonic resonance), sqrt'(0)=Inf causes
+    # 0*Inf=NaN in the adjoint.  The floor keeps the gradient finite.
+    # jnp.where zeros delta_u for disc<0; the VJP of the enclosing lax.cond
+    # evaluates this code even for the non-resonant branch.
+    disc = n_para**2 + nY**2 - 1
+    delta_u = jnp.sqrt(jnp.maximum(1e-30, disc)) / jnp.maximum(jnp.abs(denom), 1e-10)
+    delta_u = jnp.where(disc < 0, 0.0, delta_u)
+    u_res = nY * n_para / denom
+    # Use u_cutoff = 7 * thermal_velocity (exp(-24.5) ≈ 2e-11 of distribution peak).
+    u_cutoff = 7.0 * thermal_velocity
+    # Use the unclamped circle so that wide circles that straddle u_∥ = 0 are not
+    # mistakenly rejected.
+    u_min = u_res - delta_u
+    u_max = u_res + delta_u
+    in_bulk = (disc >= 0) & (jnp.minimum(jnp.abs(u_min), jnp.abs(u_max)) < u_cutoff)
+    return u_min, u_max, in_bulk
+
+
+def _any_harmonic_resonant(
+    refractive_index: jt.Float[jax.Array, "3"],
+    magnetic_field: jt.Float[jax.Array, "3"],
+    electron_temperature_keV: ScalarFloat,
+    frequency: ScalarFloat,
+    max_harmonic: int,
+) -> ScalarBool:
+    """Whether any harmonic's resonance reaches the bulk; if none does, alpha is zero."""
+    b_norm = jnp.linalg.norm(magnetic_field)
+    cyclotron_frequency = quantities.electron_cyclotron_frequency(
+        magnetic_field_strength=b_norm
+    )
+    n_para = jnp.dot(refractive_index, magnetic_field) / b_norm
+    thermal_velocity = quantities.normalized_electron_thermal_velocity(
+        electron_temperature_keV=jnp.maximum(electron_temperature_keV, 0.0)
+    )
+    resonant = jnp.array(False)
+    for harmonic_index in range(1, max_harmonic + 1):
+        nY = harmonic_index * cyclotron_frequency / frequency
+        resonant = resonant | _resonance_circle(nY, n_para, thermal_velocity)[2]
+    return resonant
 
 
 def absorption_coefficient(
@@ -304,23 +362,9 @@ def compute_resonance_integral(
     nY = harmonic_index * cyclotron_frequency / frequency
     n_para = refractive_index_para
     denom = 1 - n_para**2
-    # 1e-30 floor: at disc=0 (exact 2nd-harmonic resonance), sqrt'(0)=Inf causes
-    # 0*Inf=NaN in the adjoint.  The floor keeps the gradient finite.
-    # jnp.where zeros delta_u for disc<0; the VJP of the enclosing lax.cond
-    # evaluates this code even for the non-resonant branch.
-    disc = n_para**2 + nY**2 - 1
-    delta_u = jnp.sqrt(jnp.maximum(1e-30, disc)) / jnp.maximum(jnp.abs(denom), 1e-10)
-    delta_u = jnp.where(disc < 0, 0.0, delta_u)
-    u_res = nY * n_para / denom
-    # Use u_cutoff = 7 * thermal_velocity (exp(-24.5) ≈ 2e-11 of distribution peak).
-    u_cutoff = 7.0 * thermal_velocity
-
-    # Early return if resonance region doesn't intersect bulk of distribution.
-    # Use the unclamped delta_u so that wide resonance circles (large delta_u)
-    # that straddle u_para = 0 are not mistakenly rejected after clamping.
-    u_min_raw = u_res - delta_u
-    u_max_raw = u_res + delta_u
-    resonance_in_bulk = jnp.minimum(jnp.abs(u_min_raw), jnp.abs(u_max_raw)) < u_cutoff
+    u_min_raw, u_max_raw, resonance_in_bulk = _resonance_circle(
+        nY, n_para, thermal_velocity
+    )
 
     # The resonant electrons lie on a curve in momentum space along which
     # γ = nY + N_∥·u_∥ grows linearly, so the integrand is largest at the
