@@ -483,3 +483,55 @@ def test_ko_tensor_reduces_to_cold_in_low_temperature_limit():
         rtol=1e-3,
         err_msg="eps[1,0].imag (-D element) must match cold value",
     )
+
+
+@pytest.mark.parametrize(
+    ("harmonic", "nY", "n_para", "te_keV"),
+    [
+        pytest.param(1, 0.95, 0.5, 0.1, id="cold-spike-at-low-gamma-end"),
+        pytest.param(2, 1.0, -0.43, 1.4, id="negative-npar-peak-at-upper-end"),
+        pytest.param(1, 1.01, 1e-3, 2.0, id="npar-near-zero-whole-circle"),
+        # Low-γ end at 5 v_th: the integrand still contributes beyond 7 v_th.
+        pytest.param(1, 0.9034, 0.44, 1.4, id="tail-beyond-7-vth"),
+        pytest.param(3, 1.0, 0.3, 10.0, id="third-harmonic"),
+        pytest.param(4, 1.0, 0.3, 20.0, id="fourth-harmonic"),
+    ],
+)
+def test_resonance_integral_matches_quadrature_over_whole_circle(
+    harmonic, nY, n_para, te_keV
+):
+    """The integration window must not cut off any part of the integrand that contributes."""
+    thermal_velocity = quantities.normalized_electron_thermal_velocity(
+        electron_temperature_keV=te_keV
+    )
+    polarization_vector = jnp.array([0.6, 0.7j, 0.3]) / np.sqrt(0.94)
+    args = dict(
+        harmonic_index=harmonic,
+        cyclotron_frequency=nY * _FREQ / harmonic,
+        frequency=_FREQ,
+        refractive_index_para=n_para,
+        refractive_index_perp=0.8,
+        polarization_vector=polarization_vector,
+        thermal_velocity=thermal_velocity,
+    )
+    K2_scaled = bessel.kve_jax(2, 2 / thermal_velocity**2)
+    integrand = jax.jit(
+        lambda u: absorption.resonance_integrand(
+            **args, parallel_momentum=u, K2_scaled=K2_scaled
+        )
+    )
+    half = np.sqrt(n_para**2 + nY**2 - 1) / (1 - n_para**2)
+    u_res = nY * n_para / (1 - n_para**2)
+    low_gamma_end = u_res - half if n_para > 0 else u_res + half
+    reference, _ = quad(
+        lambda u: float(integrand(u)),
+        u_res - half,
+        u_res + half,
+        points=[low_gamma_end],
+        epsabs=0,
+        epsrel=1e-13,
+        limit=1000,
+    )
+    np.testing.assert_allclose(
+        absorption.compute_resonance_integral(**args), reference, rtol=1e-12, atol=0
+    )
