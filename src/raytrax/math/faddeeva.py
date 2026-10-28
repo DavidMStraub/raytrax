@@ -1,116 +1,55 @@
 """Plasma dispersion function Z(ζ) and its derivative, computed via the Faddeeva function.
 
 The Faddeeva function w(z) = exp(-z²)·erfc(-iz) is implemented in pure JAX
-using Poppe & Wijers (1990) Algorithm 680.
+using Weideman's (1994) rational approximation.
 
 Reference:
-    G. P. M. Poppe and C. M. J. Wijers, "More efficient computation of the
-    complex error function", ACM Trans. Math. Softw. 16(1), 38-46 (1990).
+    J. A. C. Weideman, "Computation of the complex error function", SIAM J.
+    Numer. Anal. 31(5), 1497-1518 (1994).
 """
 
 import jax
 import jax.numpy as jnp
-
-_ERRF = 1.12837916709551257  # 2/sqrt(pi)
-_XLIM = 5.33
-_YLIM = 4.29
+import numpy as np
 
 
-def _wofz_region2(x: jax.Array, y: jax.Array):
-    """9-step backward continued fraction for |z| outside the inner region."""
-    xh = y
-    yh = x
-
-    def body(i, state):
-        n = jnp.float64(10 - i)  # i=1..9  →  n=9..1
-        Rx, Ry = state
-        Tx = xh + n * Rx
-        Ty = yh - n * Ry
-        Tn = Tx * Tx + Ty * Ty
-        return 0.5 * Tx / Tn, 0.5 * Ty / Tn
-
-    Rx, Ry = jax.lax.fori_loop(1, 10, body, (jnp.zeros_like(x), jnp.zeros_like(x)))
-    return _ERRF * Rx, _ERRF * Ry
+def _weideman_coefficients(n: int) -> tuple[float, np.ndarray]:
+    """Length scale L and polynomial coefficients (highest degree first), Weideman eq. (3.6)."""
+    length = np.sqrt(n / np.sqrt(2))
+    k = np.arange(-2 * n + 1, 2 * n)
+    t = length * np.tan(k * np.pi / (4 * n))
+    f = np.concatenate([[0.0], np.exp(-(t**2)) * (length**2 + t**2)])
+    a = np.real(np.fft.fft(np.fft.fftshift(f))) / (4 * n)
+    return length, a[1 : n + 1][::-1]
 
 
-def _wofz_region1(x: jax.Array, y: jax.Array):
-    """Inner-region Shuman-sum algorithm for y < 4.29 and x < 5.33.
+# 40 terms: ~1e-14 relative accuracy in the upper half-plane, where the Shkarofsky
+# functions evaluate w, and ~2e-15 on the real axis, where their psi -> 0
+# recurrence amplifies errors by ~1e4 (32 terms leave 3e-13 there).
+_L, _A = _weideman_coefficients(40)
 
-    The loop runs at most 31 steps (nu ≤ 31); a static fori_loop with
-    masking replaces the data-dependent while_loop.
-    """
-    q = (1.0 - y / _YLIM) * jnp.sqrt(jnp.maximum(0.0, 1.0 - (x / _XLIM) ** 2))
-    h = 1.0 / (3.2 * q)
-    nc = 7.0 + jnp.floor(23.0 * q)  # ∈ [7, 30]
-    nu = 10.0 + jnp.floor(21.0 * q)  # ∈ [10, 31]
-    xl = jnp.power(h, 1.0 - nc)
-    xh = y + 0.5 / h
-    yh = x
 
-    _MAX = 32
-
-    def body(i, state):
-        n = jnp.float64(_MAX - 1 - i)
-        Rx, Ry, xl_, Sx, Sy = state
-
-        Tx = xh + n * Rx
-        Ty = yh - n * Ry
-        Tn = Tx * Tx + Ty * Ty
-        Rx2 = 0.5 * Tx / Tn
-        Ry2 = 0.5 * Ty / Tn
-
-        active = (n >= 1.0) & (n <= nu)
-        accum = active & (n <= nc)
-
-        Saux = Sx + xl_
-        Sx2 = jnp.where(accum, Rx2 * Saux - Ry2 * Sy, Sx)
-        Sy2 = jnp.where(accum, Rx2 * Sy + Ry2 * Saux, Sy)
-        xl2 = jnp.where(accum, h * xl_, xl_)
-        Rx2 = jnp.where(active, Rx2, Rx)
-        Ry2 = jnp.where(active, Ry2, Ry)
-
-        return Rx2, Ry2, xl2, Sx2, Sy2
-
-    init = (
-        jnp.zeros_like(x),
-        jnp.zeros_like(x),
-        xl,
-        jnp.zeros_like(x),
-        jnp.zeros_like(x),
-    )
-    _, _, _, Sx, Sy = jax.lax.fori_loop(0, _MAX, body, init)
-    return _ERRF * Sx, _ERRF * Sy
+def _wofz_upper(z: jax.Array) -> jax.Array:
+    """w(z) for Im(z) >= 0: one polynomial in (L + iz)/(L - iz), no loops or branches."""
+    d = _L - 1j * z
+    big_z = (_L + 1j * z) / d
+    p = jnp.polyval(jnp.asarray(_A), big_z)
+    return 2 * p / d**2 + 1 / (jnp.sqrt(jnp.pi) * d)
 
 
 @jax.custom_jvp
 def wofz_jax(z):
     """Compute the Faddeeva function w(z) = exp(-z²)·erfc(-iz) for complex z."""
     z = jnp.asarray(z, dtype=jnp.complex128)
-    x_re = jnp.real(z)
-    x_im = jnp.imag(z)
-    x = jnp.abs(x_re)
-    y = jnp.abs(x_im)
-
-    inner = (y < _YLIM) & (x < _XLIM)
-    Wx1, Wy1 = _wofz_region1(x, y)
-    Wx2, Wy2 = _wofz_region2(x, y)
-    Wx = jnp.where(inner, Wx1, Wx2)
-    Wy = jnp.where(inner, Wy1, Wy2)
-
-    # Im(z) = 0: Re(w(t)) = exp(-t²)
-    Wx = jnp.where(y == 0.0, jnp.exp(-x * x), Wx)
-
-    # Odd symmetry in Re(z): Im(w(-x+iy)) = -Im(w(x+iy))
-    Wy = jnp.sign(x_re) * Wy
-
-    # Reflection for Im(z) < 0: w(a-iy) = 2exp(-(a-iy)²) - w(-a+iy)
-    e2 = 2.0 * jnp.exp(y * y - x * x)
-    Wx_neg = e2 * jnp.cos(2.0 * x * y) - Wx
-    Wy_neg = jnp.sign(x_re) * e2 * jnp.sin(2.0 * x * y) + Wy
-    Wx = jnp.where(x_im < 0.0, Wx_neg, Wx)
-    Wy = jnp.where(x_im < 0.0, Wy_neg, Wy)
-
-    return Wx + 1j * Wy
+    lower = jnp.imag(z) < 0.0
+    # The approximation holds for Im(z) >= 0; reflect: w(z) = 2exp(-z²) - w(-z).
+    w = _wofz_upper(jnp.where(lower, -z, z))
+    w = jnp.where(lower, 2.0 * jnp.exp(-z * z) - w, w)
+    # Im(z) = 0: Re(w(t)) = exp(-t²); the approximation is accurate there only in
+    # absolute terms, so Re(w) of a large real argument would carry no digits.
+    return jnp.where(
+        jnp.imag(z) == 0.0, jnp.exp(-(jnp.real(z) ** 2)) + 1j * jnp.imag(w), w
+    )
 
 
 @wofz_jax.defjvp

@@ -22,6 +22,14 @@ def test_jv_jax_real(v, z):
     np.testing.assert_allclose(jv_jax(v, z_jax), scipy_jv(v, z), rtol=0, atol=1e-11)
 
 
+@pytest.mark.parametrize("v", [0, 1, 2, 3])
+def test_jv_jax_matches_scipy_in_application_range(v):
+    # k_perp rho stays below 2 on the public test rays.
+    z = jnp.linspace(0, 2, 401)
+    got = np.asarray(jax.vmap(lambda zi: jv_jax(v, zi))(z))
+    np.testing.assert_allclose(got, scipy_jv(v, z), rtol=0, atol=1e-15)
+
+
 @pytest.mark.parametrize("v", [0, 1, 5])
 def test_jv_jax_derivative(v):
     z = jnp.linspace(-10, 10, 2000, dtype=jnp.float64)

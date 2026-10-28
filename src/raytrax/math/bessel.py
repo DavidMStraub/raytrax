@@ -1,33 +1,32 @@
 """Modified Bessel functions (K₂, exponentially scaled Kν) used in the relativistic Maxwell-Jüttner distribution."""
 
+import math
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 
 # Number of terms in the ascending power series for J_v(z).
-# 50 terms gives ~1e-14 relative accuracy for |z| up to 10.
-_JV_SERIES_NTERMS = 50
+# 30 terms give ~1e-14 relative accuracy for |z| up to 10.
+_JV_SERIES_NTERMS = 30
 
 
 def _jv_series(v, z):
     """Bessel J_v(z) via ascending power series for non-negative integer order.
 
-    J_v(z) = sum_{k=0}^{N} (-1)^k / (k! * Gamma(k+v+1)) * (z/2)^(2k+v)
+    J_v(z) = (z/2)^v sum_{k=0}^{N} (-1)^k / (k! * (k+v)!) * (z/2)^(2k)
 
     Pure JAX implementation — no callbacks, fully differentiable, vmap-friendly.
     Handles both scalar and array z inputs via broadcasting.
     """
+    coefficients = [
+        (-1) ** k / (math.factorial(k) * math.factorial(k + v))
+        for k in range(_JV_SERIES_NTERMS)
+    ]
     half_z = z / 2.0
-    k = jnp.arange(_JV_SERIES_NTERMS, dtype=jnp.float64)
-    # Reshape k for broadcasting: (N, 1, 1, ...) to match z's dimensions
-    k = k.reshape((-1,) + (1,) * jnp.ndim(z))
-    # Compute in log-space for numerical stability
-    log_terms = (2 * k + v) * jnp.log(jnp.maximum(jnp.abs(half_z), 1e-300)) - (
-        jax.scipy.special.gammaln(k + 1) + jax.scipy.special.gammaln(k + v + 1)
-    )
-    signs = (-1.0) ** k
-    return jnp.sum(signs * jnp.exp(log_terms), axis=0)
+    q = half_z * half_z
+    total = jnp.polyval(jnp.asarray(coefficients[::-1]), q)
+    return half_z**v * total
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0,))

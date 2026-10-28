@@ -201,3 +201,23 @@ def test_plasma_dispersion_function_derivative():
     Z_prime = plasma_dispersion_function_derivative(z)
     Z_prime_fd = (Z[2:] - Z[:-2]) / (2 * dx)
     np.testing.assert_allclose(Z_prime[1:-1], Z_prime_fd, rtol=0, atol=1e-3)
+
+
+# Grid over the region the Shkarofsky functions visit on the public test rays
+# (Re in [-123, 39], Im in [0, 152]) plus the lower half-plane near the origin.
+_GRID = np.concatenate(
+    [
+        (
+            np.linspace(-130, 130, 261)[None] + 1j * np.linspace(0, 160, 161)[:, None]
+        ).ravel(),
+        (
+            np.linspace(-6, 6, 121)[None] + 1j * np.linspace(-6, -1e-3, 61)[:, None]
+        ).ravel(),
+    ]
+)
+
+
+def test_wofz_matches_scipy_on_grid():
+    # Measured maximum relative error 3.3e-14 (lower half-plane, via the reflection).
+    got = np.asarray(jax.jit(jax.vmap(wofz_jax))(jnp.asarray(_GRID)))
+    np.testing.assert_allclose(got, scipy_wofz(_GRID), rtol=1e-13, atol=0)
