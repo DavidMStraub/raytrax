@@ -163,3 +163,21 @@ def test_extrapolation_beyond_lcms(torus_wout):
     assert jnp.allclose(b_mag[idx_below], b_mag[idx_above], rtol=0.2), (
         "B field should be continuous across LCMS"
     )
+
+
+def test_geometry_is_continuously_differentiable_across_lcms(w7x_wout):
+    """The extrapolated geometry continues the radial slope of R and Z at rho = 1."""
+    h = 1e-5
+    rho_theta_phi = jnp.stack(
+        jnp.meshgrid(
+            jnp.array([1 - h, 1.0, 1 + h]),
+            jnp.linspace(0, 2 * jnp.pi, 16),
+            jnp.linspace(0, 2 * jnp.pi / w7x_wout.nfp, 5),
+            indexing="ij",
+        ),
+        axis=-1,
+    )
+    rphiz = np.asarray(evaluate_rphiz_on_toroidal_grid(w7x_wout, rho_theta_phi))
+    slope_inside = (rphiz[1] - rphiz[0]) / h
+    slope_outside = (rphiz[2] - rphiz[1]) / h
+    np.testing.assert_allclose(slope_outside, slope_inside, rtol=0, atol=1e-3)

@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import TYPE_CHECKING
+from functools import partial
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     import pyvista as pv
@@ -19,7 +20,9 @@ import interpax
 import jax
 import jax.numpy as jnp
 import jaxtyping as jt
+import matplotlib.path
 import numpy as np
+import optimistix as optx
 from beartype import beartype as typechecker
 from scipy.interpolate import griddata
 
@@ -27,10 +30,7 @@ from raytrax.equilibrium.protocol import WoutLike
 from raytrax.types import RadialProfiles, SafetensorsMixin
 
 from .fourier import dvolume_drho as compute_dvolume_drho
-from .fourier import (
-    evaluate_magnetic_field_on_toroidal_grid,
-    evaluate_rphiz_on_toroidal_grid,
-)
+from .fourier import evaluate_rphiz_on_toroidal_grid, extrapolate_coefficients
 
 
 @dataclass
@@ -235,6 +235,12 @@ def interpolate_toroidal_to_cylindrical_grid(
     return jnp.stack(values, axis=1)
 
 
+# Best-so-far: a node that does not converge keeps its smallest-residual iterate.
+_NEWTON: optx.AbstractRootFinder = optx.BestSoFarRootFinder(
+    optx.Newton(rtol=1e-12, atol=1e-12)
+)
+
+
 @jt.jaxtyped(typechecker=typechecker)
 def cylindrical_grid_for_equilibrium(
     equilibrium: WoutLike, n_rho: int, n_theta: int, n_phi: int, n_r: int, n_z: int
@@ -259,66 +265,198 @@ def cylindrical_grid_for_equilibrium(
         raise NotImplementedError(
             "Non stellarator symmetric equilibria are not supported yet."
         )
-    phi_max = 2 * jnp.pi / equilibrium.nfp / 2
-    # Extend grid to rho_max = 1.2 to allow extrapolation beyond LCMS
-    rho_max = 1.2
+    # Each node's flux coordinates are found by Newton on (R, Z)(rho, theta) in the
+    # node's phi plane, so rho and B are exact at the nodes rather than interpolated
+    # across a triangulation of a toroidal grid.
+    phis = jnp.linspace(0, jnp.pi / equilibrium.nfp, n_phi)
+    rho_max = 1.2  # extend beyond the LCMS to allow extrapolation
     rho_theta_phi = jnp.stack(
         jnp.meshgrid(
             jnp.linspace(0, rho_max, n_rho),
             jnp.linspace(0, 2 * jnp.pi, n_theta),
-            jnp.linspace(0, phi_max, n_phi),
+            phis,
             indexing="ij",
         ),
         axis=-1,
     )
-    rphiz = evaluate_rphiz_on_toroidal_grid(
-        equilibrium,
-        rho_theta_phi,
-    )
-    Bxyz = evaluate_magnetic_field_on_toroidal_grid(
-        equilibrium,
-        rho_theta_phi,
-    )
-    # Convert Cartesian B to cylindrical (B_R, B_phi, B_Z) for storage
-    phi = rphiz[..., 1]
-    cp, sp = jnp.cos(phi), jnp.sin(phi)
-    Bcyl = jnp.stack(
-        [
-            Bxyz[..., 0] * cp + Bxyz[..., 1] * sp,
-            -Bxyz[..., 0] * sp + Bxyz[..., 1] * cp,
-            Bxyz[..., 2],
-        ],
-        axis=-1,
-    )
-    rmin = jnp.min(rphiz[..., 0])
-    rmax = jnp.max(rphiz[..., 0])
-    zmin = jnp.min(rphiz[..., 2])
-    zmax = jnp.max(rphiz[..., 2])
-    rz_cylindrical = jnp.stack(
-        jnp.meshgrid(
-            jnp.linspace(rmin, rmax, n_r),
-            jnp.linspace(zmin, zmax, n_z),
-            indexing="ij",
-        ),
-        axis=-1,
-    )
-    value_toroidal = jnp.concatenate([rho_theta_phi[..., :1], Bcyl], axis=-1)
-    rhoBxyz_cylindrical = interpolate_toroidal_to_cylindrical_grid(
-        rphiz_toroidal=rphiz,
-        rz_cylindrical=rz_cylindrical,
-        value_toroidal=value_toroidal,
-    )
+    rphiz = evaluate_rphiz_on_toroidal_grid(equilibrium, rho_theta_phi)
+    r_grid = jnp.linspace(rphiz[..., 0].min(), rphiz[..., 0].max(), n_r)
+    z_grid = jnp.linspace(rphiz[..., 2].min(), rphiz[..., 2].max(), n_z)
     rphiz_cylindrical = jnp.stack(
-        jnp.meshgrid(
-            jnp.linspace(rmin, rmax, n_r),
-            jnp.linspace(0, phi_max, n_phi),
-            jnp.linspace(zmin, zmax, n_z),
-            indexing="ij",
-        ),
-        axis=-1,
+        jnp.meshgrid(r_grid, phis, z_grid, indexing="ij"), axis=-1
     )
-    result = jnp.concatenate([rphiz_cylindrical, rhoBxyz_cylindrical], axis=-1)
-    return result
+    ns = equilibrium.ns
+    ds = 1 / (ns - 1)
+    xn = jnp.asarray(equilibrium.xn)[:, None]
+    # R, Z and their phi derivatives: d/dphi exp(-i n phi) = -i n exp(-i n phi).
+    # Newton only needs the first two, so it gets its own, cheaper spline.
+    geometry = _ThetaHarmonics(
+        knots=jnp.sqrt(jnp.linspace(0, 1, ns)),
+        coefficients=jnp.stack(
+            [
+                jnp.asarray(equilibrium.rmnc),
+                jnp.asarray(equilibrium.zmns),
+                -1j * xn * jnp.asarray(equilibrium.rmnc),
+                -1j * xn * jnp.asarray(equilibrium.zmns),
+            ]
+        ),
+        xm=jnp.asarray(equilibrium.xm),
+        xn=jnp.asarray(equilibrium.xn),
+        m_max=int(np.max(equilibrium.xm)),
+    )
+    field = _ThetaHarmonics(
+        knots=jnp.sqrt(jnp.linspace(ds / 2, 1 - ds / 2, ns - 1)),
+        coefficients=jnp.stack(
+            [
+                jnp.asarray(equilibrium.bsupumnc)[:, 1:],
+                jnp.asarray(equilibrium.bsupvmnc)[:, 1:],
+            ]
+        ),
+        xm=jnp.asarray(equilibrium.xm_nyq),
+        xn=jnp.asarray(equilibrium.xn_nyq),
+        m_max=int(np.max(equilibrium.xm_nyq)),
+    )
+    nodes = np.moveaxis(np.asarray(rphiz_cylindrical), 1, 0).reshape(n_phi, -1, 3)
+    # Newton only runs on nodes inside a finely sampled ring a bit beyond rho_max;
+    # the rest of the box is outside the domain. Each plane is padded to the same
+    # node count so the solve compiles once.
+    ring = np.asarray(
+        evaluate_rphiz_on_toroidal_grid(
+            equilibrium,
+            jnp.stack(
+                jnp.meshgrid(
+                    jnp.array([1.05 * rho_max]),
+                    jnp.linspace(0, 2 * jnp.pi, 256),
+                    phis,
+                    indexing="ij",
+                ),
+                axis=-1,
+            ),
+        )[0]
+    )
+    solve = np.stack(
+        [
+            matplotlib.path.Path(ring[:, p, ::2]).contains_points(nodes[p, :, ::2])
+            for p in range(n_phi)
+        ]
+    )
+    selected = np.argsort(~solve, axis=1, kind="stable")[:, : solve.sum(1).max()]
+    # Samples off the axis seed Newton: (rho, theta) is singular there.
+    solved = jax.lax.map(
+        partial(_plane_values, geometry, field, rho_max),
+        (
+            phis,
+            jnp.asarray(np.take_along_axis(nodes, selected[..., None], axis=1)),
+            jnp.moveaxis(rho_theta_phi[1:], 2, 0).reshape(n_phi, -1, 3),
+            jnp.moveaxis(rphiz[1:], 2, 0).reshape(n_phi, -1, 3),
+        ),
+    )
+    values = np.full((n_phi, n_r * n_z, 4), np.nan)
+    planes = np.arange(n_phi)[:, None]
+    values[planes, selected] = np.where(
+        np.take_along_axis(solve, selected, axis=1)[..., None], solved, np.nan
+    )
+    values_rphiz = np.moveaxis(values.reshape(n_phi, n_r, n_z, 4), 0, 1)
+    return jnp.concatenate([rphiz_cylindrical, jnp.asarray(values_rphiz)], axis=-1)
+
+
+class _ThetaHarmonics(NamedTuple):
+    """Fourier series sum_mn c_mn(rho) exp(i (m theta - n phi)) per quantity."""
+
+    knots: jax.Array
+    coefficients: jax.Array
+    xm: jax.Array
+    xn: jax.Array
+    m_max: int
+
+    def in_plane(self, phi: jax.Array) -> interpax.Interpolator1D:
+        """Spline in rho of a_m with series = sum_m a_m(rho) exp(i m theta) at phi."""
+        phased = self.coefficients * jnp.exp(-1j * self.xn * phi)[:, None]
+        a_m = jax.vmap(
+            partial(
+                jax.ops.segment_sum,
+                segment_ids=self.xm,
+                num_segments=self.m_max + 1,
+            )
+        )(phased)
+        return interpax.Interpolator1D(
+            self.knots, jnp.moveaxis(a_m, -1, 0), extrap=True
+        )
+
+
+def _plane_values(
+    geometry: _ThetaHarmonics,
+    field: _ThetaHarmonics,
+    rho_max: float,
+    plane: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+) -> jax.Array:
+    """(rho, B_R, B_phi, B_Z) at the nodes of one phi plane; NaN beyond rho_max."""
+    phi, nodes, sample_rho_theta_phi, sample_rphiz = plane
+    distance = jnp.linalg.norm(
+        nodes[:, None, ::2] - sample_rphiz[None, :, ::2], axis=-1
+    )
+    guess = sample_rho_theta_phi[jnp.argmin(distance, axis=1)]
+    geometry_in_plane = geometry.in_plane(phi)
+    rz = interpax.Interpolator1D(
+        geometry_in_plane.x, geometry_in_plane.f[:, :2], extrap=True
+    )
+    return jax.vmap(
+        partial(_node_values, rz, geometry_in_plane, field.in_plane(phi), rho_max)
+    )(nodes[:, ::2], guess[:, :2])
+
+
+def _node_values(
+    rz_harmonics: interpax.Interpolator1D,
+    geometry: interpax.Interpolator1D,
+    field: interpax.Interpolator1D,
+    rho_max: float,
+    rz: jax.Array,
+    guess: jax.Array,
+) -> jax.Array:
+    # Solve for rho (cos theta, sin theta), which unlike (rho, theta) is a smooth
+    # chart through the axis, so a Newton step across it needs no special case.
+    solution: optx.Solution = optx.root_find(
+        _rz_residual,
+        _NEWTON,
+        guess[0] * jnp.stack([jnp.cos(guess[1]), jnp.sin(guess[1])]),
+        args=(rz_harmonics, rz),
+        max_steps=30,
+        throw=False,
+    )
+    rho = jnp.linalg.norm(solution.value)
+    theta = jnp.arctan2(solution.value[1], solution.value[0])
+    # B is held at its LCMS value beyond rho = 1.
+    series, series_theta = _sum_harmonics(geometry, jnp.minimum(rho, 1.0), theta)
+    b_theta, b_phi = _sum_harmonics(field, jnp.minimum(rho, 1.0), theta)[0].real
+    b_cylindrical = jnp.stack(
+        [
+            b_theta * series_theta[0].real + b_phi * series[2].real,
+            b_phi * series[0].real,
+            b_theta * series_theta[1].imag + b_phi * series[3].imag,
+        ]
+    )
+    # An unconverged node keeps its best iterate: NaN would read downstream as
+    # vacuum (rho = 1.1, B = 0), a hole in the plasma.
+    return jnp.where(rho <= rho_max, jnp.append(rho, b_cylindrical), jnp.nan)
+
+
+def _rz_residual(
+    y: jax.Array, args: tuple[interpax.Interpolator1D, jax.Array]
+) -> jax.Array:
+    rz_harmonics, rz = args
+    a_m = extrapolate_coefficients(rz_harmonics, jnp.linalg.norm(y)[None])[0]
+    series = a_m @ jnp.exp(1j * jnp.arange(a_m.shape[-1]) * jnp.arctan2(y[1], y[0]))
+    return jnp.stack([series[0].real, series[1].imag]) - rz
+
+
+def _sum_harmonics(
+    harmonics: interpax.Interpolator1D, rho: jax.Array, theta: jax.Array
+) -> tuple[jax.Array, jax.Array]:
+    """sum_m a_m exp(i m theta) and its theta derivative, per quantity."""
+    a_m = extrapolate_coefficients(harmonics, rho[None])[0]
+    m = jnp.arange(a_m.shape[-1])
+    phase = jnp.exp(1j * m * theta)
+    return a_m @ phase, a_m @ (1j * m * phase)
 
 
 def build_magnetic_field_interpolator(

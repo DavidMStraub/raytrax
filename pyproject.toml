@@ -21,6 +21,7 @@ dependencies = [
   "scipy",
   "interpax>=0.3.15",
   "diffrax>=0.7.1",
+  "optimistix",
   "beartype",
   "vmecpp",
   "safetensors",
