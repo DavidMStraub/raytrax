@@ -9,10 +9,12 @@ import pytest
 
 from raytrax.api import (
     _bin_power_deposition,
+    _bin_volumes,
     _deposition_stats,
     _next_power_of_two,
     trace,
 )
+from raytrax.equilibrium.fourier import dvolume_drho
 from raytrax.equilibrium.interpolate import MagneticConfiguration
 from raytrax.physics import dispersion, quantities
 from raytrax.types import Beam, RadialProfiles, TracerSettings
@@ -301,6 +303,15 @@ def test_deposition_stats_with_power_at_axis():
     power_axis = jnp.zeros(11).at[0].set(0.5 / 1e-30)
     mean, _ = _deposition_stats(power_axis, rho_grid, dvolume_drho)
     np.testing.assert_allclose(float(mean), 0.0, atol=1e-12)
+
+
+def test_bin_volumes_add_up_to_the_vmec_volume(w7x_wout):
+    """The radial bins hold the plasma volume, and the axis bin is not empty."""
+    rho_grid = jnp.linspace(0.0, 1.0, 200)
+    volumes = _bin_volumes(rho_grid, dvolume_drho(w7x_wout, rho_grid))
+    np.testing.assert_allclose(volumes.sum(), w7x_wout.volume_p, rtol=1e-4)
+    # dV/drho ∝ rho near the axis, so the axis bin [0, Δ/2] holds 1/8 of the next.
+    np.testing.assert_allclose(volumes[0] / volumes[1], 1 / 8, rtol=1e-2)
 
 
 def test_bin_power_deposition():

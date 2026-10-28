@@ -50,10 +50,15 @@ def _bin_volumes(
     dvolume_drho: jt.Float[jax.Array, " nrho"],
 ) -> jt.Float[jax.Array, " nrho"]:
     """Volume of the radial bins centred on ``rho_grid``, floored at ``_MIN_BIN_VOLUME``."""
-    edges = jnp.concatenate(
-        [rho_grid[:1], 0.5 * (rho_grid[:-1] + rho_grid[1:]), rho_grid[-1:]]
+    # Integrate dV/drho, linear between grid points, over each half bin. Sampling it
+    # at the bin centre instead gives the axis bin dV/drho(0) = 0, i.e. no volume.
+    eighth = jnp.diff(rho_grid) / 8
+    upper_half = eighth * (3 * dvolume_drho[:-1] + dvolume_drho[1:])
+    lower_half = eighth * (3 * dvolume_drho[1:] + dvolume_drho[:-1])
+    volumes = (
+        jnp.zeros_like(dvolume_drho).at[:-1].add(upper_half).at[1:].add(lower_half)
     )
-    return jnp.maximum(dvolume_drho * jnp.diff(edges), _MIN_BIN_VOLUME)
+    return jnp.maximum(volumes, _MIN_BIN_VOLUME)
 
 
 @jax.jit

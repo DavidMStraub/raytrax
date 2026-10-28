@@ -249,11 +249,13 @@ def dvolume_drho(
     equilibrium: WoutLike, rho: jt.Float[jax.Array, " n_rho"]
 ) -> jt.Float[jax.Array, " n_rho"]:
     """Compute the derivative of the volume with respect to the effective radius."""
-    s_full = jnp.linspace(0, 1, equilibrium.ns)
-    g00_coefficients = jnp.asarray(equilibrium.gmnc)[0:1, :]  # Shape: (1, ns)
+    # gmnc lives on the half grid like bsupumnc; column 0 is an unused axis slot.
+    ds = 1 / (equilibrium.ns - 1)
+    s_half = jnp.linspace(ds / 2, 1 - ds / 2, equilibrium.ns - 1)
+    g00_coefficients = jnp.asarray(equilibrium.gmnc)[0:1, 1:]
     g00_interpolated = interpolate_coefficients_radially(
         fourier_coefficients=g00_coefficients,
-        normalized_toroidal_flux_in=s_full,
+        normalized_toroidal_flux_in=s_half,
         normalized_effective_radius_out=rho,
     )
     g00 = g00_interpolated[0, :]
