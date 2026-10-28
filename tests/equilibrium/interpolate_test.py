@@ -2,9 +2,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
+from scipy.optimize import least_squares
 
 from raytrax.equilibrium import interpolate
-from raytrax.equilibrium.fourier import evaluate_rphiz_on_toroidal_grid
+from raytrax.equilibrium.fourier import (
+    evaluate_magnetic_field_on_toroidal_grid,
+    evaluate_rphiz_on_toroidal_grid,
+)
 from raytrax.equilibrium.interpolate import (
     CylindricalGridResolution,
     MagneticConfiguration,
@@ -185,6 +189,54 @@ def test_unconverged_nodes_keep_best_iterate(torus_wout, monkeypatch):
     rho_exact = np.hypot(r - 2.0, z) / 0.5
     inside = rho_exact < 1.2 - 1e-9
     np.testing.assert_allclose(rho[inside], rho_exact[inside], rtol=0, atol=1e-12)
+
+
+def test_cylindrical_grid_nodes_match_vmec_w7x(w7x_wout):
+    """rho and B at W7-X grid nodes match an independent inversion of the geometry.
+
+    Unlike the circular torus, W7-X has a poloidal field, so this checks B_R and B_Z.
+    """
+    grid = np.asarray(
+        cylindrical_grid_for_equilibrium(
+            equilibrium=w7x_wout, n_rho=20, n_theta=32, n_phi=4, n_r=20, n_z=20
+        )
+    ).reshape(-1, 7)
+    rho = grid[:, 3]
+    inside = np.isfinite(rho) & (rho > 0.1) & (rho < 0.95)
+    nodes = grid[inside][:: max(1, np.count_nonzero(inside) // 15)]
+
+    rz_at = jax.jit(
+        lambda rho_theta_phi: evaluate_rphiz_on_toroidal_grid(w7x_wout, rho_theta_phi)
+    )
+    for r, phi, z, rho_node, *b_node in nodes:
+
+        def residual(rho_theta):
+            point = jnp.append(rho_theta, phi).reshape(1, 1, 1, 3)
+            return np.asarray(rz_at(point))[0, 0, 0, ::2] - [r, z]
+
+        seeds = jnp.stack(
+            jnp.meshgrid(
+                jnp.linspace(0.1, 1, 10),
+                jnp.linspace(0, 2 * jnp.pi, 16, endpoint=False),
+                jnp.array([phi]),
+                indexing="ij",
+            ),
+            axis=-1,
+        )
+        distance = np.linalg.norm(np.asarray(rz_at(seeds))[..., ::2] - [r, z], axis=-1)
+        seed = np.asarray(seeds).reshape(-1, 3)[np.argmin(distance), :2]
+        rho_theta = least_squares(residual, seed, xtol=1e-14, ftol=1e-14, gtol=1e-14).x
+        point = jnp.append(rho_theta, phi).reshape(1, 1, 1, 3)
+        bx, by, bz = np.asarray(
+            evaluate_magnetic_field_on_toroidal_grid(w7x_wout, point)
+        )[0, 0, 0]
+        b_cylindrical = [
+            bx * np.cos(phi) + by * np.sin(phi),
+            -bx * np.sin(phi) + by * np.cos(phi),
+            bz,
+        ]
+        np.testing.assert_allclose(rho_node, rho_theta[0], rtol=0, atol=1e-8)
+        np.testing.assert_allclose(b_node, b_cylindrical, rtol=0, atol=1e-6)
 
 
 def test_cylindrical_grid_for_equilibrium(torus_wout):
