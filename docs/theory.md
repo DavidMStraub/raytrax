@@ -20,7 +20,7 @@ The most relevant quantities describing wave propagation in the plasma are:
 - **$\boldsymbol{r}$**: Position vector along the ray trajectory
 - **$\boldsymbol{k}(\boldsymbol{r})$**: Local complex wave vector, defined as $\boldsymbol{k} = \nabla S$, which is tangential to the ray direction $\hat{\boldsymbol{s}}$, $\boldsymbol{k} = k_r \hat{\boldsymbol{s}} + i k_i \hat{\boldsymbol{s}}$
 - **$\boldsymbol{n}(\boldsymbol{r})$**: Vectorial index of refraction, defined as $\boldsymbol{n} = (c/\omega) \boldsymbol{k}$ with magnitude $n = |\boldsymbol{n}|$
-- **$\alpha$**: Absorption coefficient, given by $\alpha = 2\,\text{Im}(\boldsymbol{k} \cdot \hat{\boldsymbol{s}}) = 2 k_i$, leading to exponential decay $e^{-\alpha s}$ of the wave amplitude along the ray
+- **$\alpha$**: Absorption coefficient, given by $\alpha = 2\,\text{Im}(\boldsymbol{k} \cdot \hat{\boldsymbol{s}}) = 2 k_i$, leading to exponential decay $e^{-\alpha s}$ of the wave power (and $e^{-\alpha s/2}$ of the wave amplitude) along the ray
 
 See [absorption](theory/absorption.md) for more details on the absorption coefficient and how it is computed from the plasma parameters.
 

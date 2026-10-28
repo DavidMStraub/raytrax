@@ -211,7 +211,7 @@ def cold_power_flux_vector_stix(
 ) -> jt.Float[jax.Array, "3"]:
     r"""Compute the cold-plasma power flux vector in Stix coordinates.
 
-    Identical to :func:`power_flux_vector_stix` but uses the cold dielectric
+    Identical to `power_flux_vector_stix` but uses the cold dielectric
     tensor for the Hamiltonian gradient, avoiding the N-resonance singularities
     that arise when differentiating the warm (KO) tensor near the ECR harmonic.
     Thermal corrections to the group velocity are O(v_th/c) ≲ 3 % and are
@@ -226,7 +226,7 @@ def cold_power_flux_vector_stix(
         mode: Wave polarization mode, ``"X"`` for extraordinary or ``"O"`` for ordinary.
 
     Returns:
-        Power flux vector :math:`\mathbf{F} = -\tfrac{1}{2}\,\partial_\mathbf{N}(e^* D^H_\mathrm{cold} e)`.
+        Power flux vector $\mathbf{F} = -\tfrac{1}{2}\,\partial_\mathbf{N}(e^* D^H_\mathrm{cold} e)$.
     """
     refractive_index = jnp.array(
         [refractive_index_perp, 0.0, refractive_index_para],

@@ -1,4 +1,4 @@
-"""Weakly-relativistic electron cyclotron absorption coefficient via momentum-space resonance integration."""
+"""Relativistic electron cyclotron absorption coefficient via momentum-space resonance integration."""
 
 from typing import Literal
 
@@ -159,7 +159,7 @@ def absorption_coefficient(
     )
     # Absorption coefficient: alpha = (omega/c) * eAe / |F|
     # where eAe = ê* · ε_r^A · ê is the anti-Hermitian dielectric form
-    # and F is the power flux vector (F = 0.5 * dH/dN).
+    # and F = -0.5 * dH/dN is the power flux vector.
     omega = 2 * jnp.pi * frequency
 
     # Avoid division by zero or NaN when power flux is very small or invalid (near cutoff)
@@ -171,7 +171,7 @@ def absorption_coefficient(
     )
     return jax.lax.cond(
         is_valid,
-        lambda: omega / (2 * speed_of_light) * eAe / power_flux_magnitude,
+        lambda: omega / speed_of_light * eAe / power_flux_magnitude,
         lambda: 0.0,
     )
 
@@ -191,23 +191,24 @@ def anti_hermitian_dielectric_form(
     anti-Hermitian part of the relative dielectric tensor contracted with the
     polarization vector.
 
-    This is the numerator quantity in the absorption coefficient formula,
+    Here $\boldsymbol{\varepsilon}_r^A = (\boldsymbol{\varepsilon}_r -
+    \boldsymbol{\varepsilon}_r^\dagger)/(2i)$. This is the numerator quantity in the
+    absorption coefficient formula,
 
-    .. math::
-        \alpha = \frac{\omega}{c} \frac{\hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A \cdot \hat{e}}{|F|}
+    $$\alpha = \frac{\omega}{c} \frac{\hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A
+    \cdot \hat{e}}{|F|}$$
 
-    where :math:`F` is the power flux vector.  The result is positive for an absorbing
+    where $F$ is the power flux vector.  The result is positive for an absorbing
     plasma.
 
     The anti-Hermitian part is computed via the fully relativistic momentum-space
     resonance integral (Bornatici et al. 1983), summed over cyclotron harmonics:
 
-    .. math::
-        \hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A \cdot \hat{e}
-        = -X_p \cdot 4\pi^2 \sum_s I_s
+    $$\hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A \cdot \hat{e}
+    = -2\pi^2 X_p \sum_s I_s$$
 
-    where :math:`X_p = (\omega_p/\omega)^2` and :math:`I_s` is the resonance integral
-    for harmonic :math:`s` (negative for absorption).
+    where $X_p = (\omega_p/\omega)^2$ and $I_s$ is the resonance integral
+    for harmonic $s$ (negative for absorption).
 
     Args:
         plasma_frequency: Electron plasma frequency in Hz.
@@ -222,7 +223,7 @@ def anti_hermitian_dielectric_form(
             Python integer (compile-time constant for JIT).
 
     Returns:
-        The scalar quadratic form :math:`\hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A \cdot \hat{e}` (dimensionless).
+        The scalar quadratic form $\hat{e}^* \cdot \boldsymbol{\varepsilon}_r^A \cdot \hat{e}$ (dimensionless).
     """  # noqa: E501
     resonance_integral = 0.0
     for harmonic_index in range(1, max_harmonic + 1):
@@ -258,7 +259,7 @@ def anti_hermitian_dielectric_form(
             ),
         )
     Xp = (plasma_frequency / frequency) ** 2
-    return -Xp * 4 * jnp.pi**2 * resonance_integral
+    return -Xp * 2 * jnp.pi**2 * resonance_integral
 
 
 def compute_resonance_integral(
@@ -274,13 +275,13 @@ def compute_resonance_integral(
     r"""Compute the resonance integral for the given harmonic.
 
     The resonance integral is defined as:
-    .. math::
-        I = \int_{u_{min}}^{u_{max}} du_\parallel D_{ql} (\frac{\partial f_e}{\partial \gamma} + n_\parallel \frac{\partial f_e}{\partial u_\parallel})
 
-    where :math:`D_{ql}` is the quasilinear diffusion coefficient, :math:`f_e` is the
-    electron distribution function, :math:`n_\parallel` is the refractive index parallel
-    to the magnetic field, and :math:`u_\parallel` is the normalized parallel momentum
-    (:math:`u_\parallel = p_\parallel / (m_0 c)`).
+    $$I = \int_{u_{min}}^{u_{max}} du_\parallel D_{ql} \left(\frac{\partial f_e}{\partial \gamma} + n_\parallel \frac{\partial f_e}{\partial u_\parallel}\right)$$
+
+    where $D_{ql}$ is the quasilinear diffusion coefficient, $f_e$ is the
+    electron distribution function, $n_\parallel$ is the refractive index parallel
+    to the magnetic field, and $u_\parallel$ is the normalized parallel momentum
+    ($u_\parallel = p_\parallel / (m_0 c)$).
 
     See eq. (4) of Marushchenko, Maassberg, and Turkin,
     https://doi.org/10.1088/0029-5515/48/5/054002

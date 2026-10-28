@@ -5,7 +5,7 @@ import pytest
 from scipy.integrate import quad
 
 from raytrax.math import bessel
-from raytrax.physics import absorption, distribution_function, quantities
+from raytrax.physics import absorption, distribution_function, polarization, quantities
 from raytrax.physics.dielectric_tensor import (
     cold_dielectric_tensor,
     weakly_relativistic_dielectric_tensor,
@@ -408,6 +408,60 @@ def test_anti_hermitian_dielectric_form_positive():
     )
     assert np.isfinite(float(eAe)), "eAe must be finite"
     assert float(eAe) >= 0, "eAe must be non-negative (absorbing plasma)"
+
+
+@pytest.mark.parametrize(
+    "mode, harmonic",
+    [("X", 2), ("O", 1)],
+)
+def test_anti_hermitian_dielectric_form_matches_ko_tensor(mode, harmonic):
+    """The resonance integral must equal ê*·ε^A·ê with ε^A = (ε − ε†)/(2i).
+
+    At moderate temperature the weakly relativistic KO tensor is accurate, so
+    its anti-Hermitian part fixes the normalization of the relativistic form.
+    """
+    frequency = 140e9
+    # Slightly above the resonant field (resonance on the low-field side)
+    B_resonant = float(
+        2 * jnp.pi * frequency * 9.1093837e-31 / 1.602176634e-19 / harmonic
+    )
+    cyclotron_freq = quantities.electron_cyclotron_frequency(1.01 * B_resonant)
+    plasma_freq = quantities.electron_plasma_frequency(0.5)
+    thermal_vel = quantities.normalized_electron_thermal_velocity(3.0)
+    n_para, n_perp = 0.15, 0.9
+
+    eps = weakly_relativistic_dielectric_tensor(
+        frequency=frequency,
+        plasma_frequency=plasma_freq,
+        cyclotron_frequency=cyclotron_freq,
+        thermal_velocity=thermal_vel,
+        refractive_index_para=n_para,
+        refractive_index_perp=n_perp,
+        max_s=2,
+        max_k=2,
+    )
+    pol = polarization.polarization(
+        dielectric_tensor=eps,
+        refractive_index_perp=n_perp,
+        refractive_index_para=n_para,
+        frequency=frequency,
+        cyclotron_frequency=cyclotron_freq,
+        mode=mode,
+    )
+    eps_anti_hermitian = (eps - eps.conj().T) / (2j)
+    expected = float(jnp.real(jnp.vdot(pol, eps_anti_hermitian @ pol)))
+
+    eAe = absorption.anti_hermitian_dielectric_form(
+        plasma_frequency=plasma_freq,
+        cyclotron_frequency=cyclotron_freq,
+        frequency=frequency,
+        refractive_index_para=n_para,
+        refractive_index_perp=n_perp,
+        thermal_velocity=thermal_vel,
+        polarization_vector=pol,
+        max_harmonic=2,
+    )
+    np.testing.assert_allclose(float(eAe), expected, rtol=0.03)
 
 
 # ---------------------------------------------------------------------------
