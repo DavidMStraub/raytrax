@@ -142,6 +142,9 @@ def _y_to_state(
     )
 
 
+# diffrax traces the RHS several times per solve (shape check and RK stages); a
+# nested jit traces it once and reuses the jaxpr.
+@jax.jit
 def _right_hand_side(
     s: float | int | jax.Array,
     y: jt.Float[jax.Array, " n "],
