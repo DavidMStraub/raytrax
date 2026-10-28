@@ -109,7 +109,11 @@ class MagneticConfiguration(SafetensorsMixin):
     """Whether the configuration has stellarator symmetry."""
 
     rho_1d: jt.Float[jax.Array, " nrho_1d"]
-    """1D radial grid for volume derivative."""
+    """1D radial grid for the volume derivative and the power deposition profile.
+
+    Must be uniformly spaced: the deposited power is binned into bins of equal
+    width centred on these points.
+    """
 
     dvolume_drho: jt.Float[jax.Array, " nrho_1d"]
     r"""Volume derivative $dV/d\rho$ on the 1D radial grid."""

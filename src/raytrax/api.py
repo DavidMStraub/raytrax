@@ -81,6 +81,8 @@ def _bin_power_deposition(
        from density. τ uses linear to preserve monotonicity; rho uses cubic
        for smooth deposition profiles.
     3. Use exact overlap-based binning on the dense samples.
+
+    ``rho_grid`` must be uniformly spaced.
     """
     # --- 1. Sanitize inf padding -------------------------------------------
     # diffrax fills unused sol.ys slots with inf.  Push padded arc_length
