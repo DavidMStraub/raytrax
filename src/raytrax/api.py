@@ -298,6 +298,10 @@ def trace(
     # Trim to valid (finite) arc-length entries; diffrax leaves unvisited
     # SaveAt slots as inf after an early-exit event.
     n = int(n_valid.item())
+
+    # Slice on the host: eager JAX slicing to a new length n compiles a program per
+    # op and length, so every new trajectory length would recompile.
+    result = jax.device_get(result)
     if bool(result.incomplete):
         s_end = float(result.arc_length[n - 1])
         if n == settings.max_steps + 1:
@@ -316,16 +320,18 @@ def trace(
         )
 
     beam_profile = BeamProfile(
-        position=result.ode_state[:n, :3],
-        arc_length=result.arc_length[:n],
-        refractive_index=result.ode_state[:n, 3:6],
-        optical_depth=result.ode_state[:n, 6],
-        absorption_coefficient=result.absorption_coefficient[:n],
-        electron_density=result.electron_density[:n],
-        electron_temperature=result.electron_temperature[:n],
-        magnetic_field=result.magnetic_field[:n],
-        normalized_effective_radius=result.normalized_effective_radius[:n],
-        linear_power_density=result.linear_power_density[:n] * beam.power,
+        position=jnp.asarray(result.ode_state[:n, :3]),
+        arc_length=jnp.asarray(result.arc_length[:n]),
+        refractive_index=jnp.asarray(result.ode_state[:n, 3:6]),
+        optical_depth=jnp.asarray(result.ode_state[:n, 6]),
+        absorption_coefficient=jnp.asarray(result.absorption_coefficient[:n]),
+        electron_density=jnp.asarray(result.electron_density[:n]),
+        electron_temperature=jnp.asarray(result.electron_temperature[:n]),
+        magnetic_field=jnp.asarray(result.magnetic_field[:n]),
+        normalized_effective_radius=jnp.asarray(result.normalized_effective_radius[:n]),
+        linear_power_density=jnp.asarray(
+            result.linear_power_density[:n] * float(beam.power)
+        ),
     )
 
     # Clamp: _next_power_of_two(n) can exceed the buffer length (e.g. 4097→8192
@@ -339,7 +345,7 @@ def trace(
         result.ode_state[:n_bucket, 6],
     )
 
-    tau_final = beam_profile.optical_depth[-1]
+    tau_final = jnp.asarray(result.ode_state[n - 1, 6])
     absorbed_fraction = 1.0 - jnp.exp(-tau_final)
     rho_mean, rho_std = _deposition_stats(
         power_binned,
@@ -357,5 +363,5 @@ def trace(
         optical_depth=tau_final,
         deposition_rho_mean=rho_mean,
         deposition_rho_std=rho_std,
-        incomplete=result.incomplete,
+        incomplete=jnp.asarray(result.incomplete),
     )
