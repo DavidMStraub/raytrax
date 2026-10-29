@@ -120,6 +120,38 @@ icon: lucide/file-code
       show_root_heading: true
       show_signature_annotations: true
 
+::: raytrax.physics.absorption.anti_hermitian_dielectric_form
+    options:
+      heading_level: 3
+      show_source: false
+      show_root_members_full_path: true
+      show_root_heading: true
+      show_signature_annotations: true
+
+::: raytrax.physics.polarization.polarization
+    options:
+      heading_level: 3
+      show_source: false
+      show_root_members_full_path: true
+      show_root_heading: true
+      show_signature_annotations: true
+
+::: raytrax.physics.dielectric_tensor.weakly_relativistic_dielectric_tensor
+    options:
+      heading_level: 3
+      show_source: false
+      show_root_members_full_path: true
+      show_root_heading: true
+      show_signature_annotations: true
+
+::: raytrax.physics.power_flux.cold_power_flux_vector_stix
+    options:
+      heading_level: 3
+      show_source: false
+      show_root_members_full_path: true
+      show_root_heading: true
+      show_signature_annotations: true
+
 
 ## Plotting
 
