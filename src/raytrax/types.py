@@ -66,6 +66,12 @@ class SafetensorsMixin:
             elif field.name in metadata:
                 # It's a scalar - parse back from string
                 value_str = metadata[field.name]
+                if isinstance(field.type, str):
+                    raise TypeError(
+                        f"Cannot restore {cls.__name__}.{field.name}: its annotation is the "
+                        f"string {field.type!r}. Classes using SafetensorsMixin must not "
+                        "use `from __future__ import annotations`."
+                    )
                 if field.type is int:
                     field_values[field.name] = int(value_str)
                 elif field.type is bool:

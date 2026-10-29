@@ -20,6 +20,28 @@ class SimpleConfig(SafetensorsMixin):
     bool_field: bool
 
 
+@dataclass
+class StringAnnotatedConfig(SafetensorsMixin):
+    """Annotations as strings, as in modules with `from __future__ import annotations`."""
+
+    array_field: "jnp.ndarray"
+    int_field: "int"
+    bool_field: "bool"
+
+
+def test_safetensors_load_rejects_string_annotations():
+    """A string annotation would restore an int or bool as a string ("False" is truthy)."""
+    config = StringAnnotatedConfig(
+        array_field=jnp.array([1.0, 2.0, 3.0]), int_field=5, bool_field=False
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "test.safetensors"
+        config.save(str(path))
+        with pytest.raises(TypeError, match="__future__"):
+            StringAnnotatedConfig.load(str(path))
+
+
 def test_safetensors_roundtrip():
     """Test save/load roundtrip preserves data."""
     config = SimpleConfig(

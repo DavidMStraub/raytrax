@@ -6,8 +6,6 @@ field $B$ need to be extrapolated from toroidal coordinates ($\rho$, $\theta$, $
 to cylindrical coordinates ($r$, $\phi$, $z$).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import partial
@@ -127,7 +125,7 @@ class MagneticConfiguration(SafetensorsMixin):
         equilibrium: WoutLike,
         magnetic_field_scale: float = 1.0,
         grid: VmecGridResolution | None = None,
-    ) -> MagneticConfiguration:
+    ) -> "MagneticConfiguration":
         """Create a MagneticConfiguration from a VMEC++ equilibrium.
 
         Optionally, apply a uniform scale factor to the magnetic field magnitude
@@ -171,7 +169,7 @@ class MagneticConfiguration(SafetensorsMixin):
             dvolume_drho=dv_drho,
         )
 
-    def to_pyvista_grid(self) -> pv.StructuredGrid:
+    def to_pyvista_grid(self) -> "pv.StructuredGrid":
         """Convert to a PyVista StructuredGrid in Cartesian coordinates.
 
         Point arrays written:
