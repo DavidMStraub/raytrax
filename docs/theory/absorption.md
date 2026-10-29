@@ -153,7 +153,11 @@ In the weakly relativistic limit, the expression above agrees with the anti-Herm
 
 ### Numerical Evaluation
 
-The integral over $u_\parallel$ is evaluated with the trapezoidal rule on 1000 points. The interval $[u_-, u_+]$ is restricted to $|u_\parallel| \le 7\,v_\text{th}/c$, where the Maxwell–Jüttner distribution has decayed by about $10^{-11}$ relative to its peak. A harmonic whose resonance ellipse does not reach into this region contributes zero.
+Along the resonance ellipse, $\gamma$ grows linearly with $u_\parallel$, so the integrand is largest at the low-$\gamma$ end of $[u_-, u_+]$ ($u_-$ for $N_\parallel > 0$, $u_+$ for $N_\parallel < 0$) and decays from there like $e^{-\mu |N_\parallel| \Delta u_\parallel}$. The integral is evaluated with Gauss–Legendre quadrature on a window that starts at this end and extends over $K$ decay lengths $1/(\mu |N_\parallel|)$, or over the whole interval if that is shorter. The integrand is analytic on the window and vanishes at the ends of the ellipse, so the quadrature converges exponentially.
+
+The window length $K$ and the number of nodes follow from the requested relative accuracy of each integral, the `resonance_rtol` argument of [`absorption_coefficient`][raytrax.physics.absorption.absorption_coefficient], and from the harmonic $s$, since the integrand behaves like $t^s e^{-t}$ near the low-$\gamma$ end ($t$ in decay lengths). For the default $10^{-14}$, the window is about 36 decay lengths with 24 nodes at $s = 1$ and 39 decay lengths with 26 nodes at $s = 2$.
+
+A harmonic whose resonance ellipse does not reach $|u_\parallel| < 7\,v_\text{th}/c$, where the Maxwell–Jüttner distribution has decayed to about $10^{-11}$ of its peak, contributes zero. If no harmonic reaches it, the absorption coefficient is zero, and the dielectric tensor, polarization and power flux are not evaluated.
 
 It is implemented in [`anti_hermitian_dielectric_form`][raytrax.physics.absorption.anti_hermitian_dielectric_form].
 
