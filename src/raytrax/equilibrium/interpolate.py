@@ -90,7 +90,11 @@ class MagneticConfiguration(SafetensorsMixin):
     """
 
     rphiz: jt.Float[jax.Array, "npoints 3"]
-    r"""The ($R$, $\phi$, $Z$) coordinates of the points on the interpolation grid."""
+    r"""The ($R$, $\phi$, $Z$) coordinates of the points on the interpolation grid.
+
+    Must be a tensor grid that is uniformly spaced along each axis: the field and
+    $\rho$ are interpolated using only the first and last node of each axis.
+    """
 
     magnetic_field: jt.Float[jax.Array, "npoints 3"]
     r"""The magnetic field $(B_R, B_\phi, B_Z)$ in cylindrical components at each grid point."""
@@ -505,84 +509,92 @@ def _sum_harmonics(
     return a_m @ phase, a_m @ (1j * m * phase)
 
 
+@jax.tree_util.register_dataclass
+@dataclass(frozen=True)
+class RegularGridInterpolator:
+    """Multilinear interpolation on a uniform grid.
+
+    The first `lower.size` axes of `f` are the grid axes, any further axes are
+    vector components. Grid values that are NaN and query points outside the
+    grid both evaluate to `fill`. Construction does no work, so building one
+    inside `jax.jit` on every call is free and gradients reach `f` directly.
+    """
+
+    lower: jt.Float[jax.Array, " ndim"]
+    """Coordinates of the first grid node along each axis."""
+
+    upper: jt.Float[jax.Array, " ndim"]
+    """Coordinates of the last grid node along each axis."""
+
+    f: jt.Float[jax.Array, "..."]
+    """Values on the grid."""
+
+    fill: float = dataclass_field(metadata={"static": True})
+    """Value for NaN grid nodes and for points outside the grid."""
+
+    def __call__(self, *x: jt.Float[jax.Array, ""]) -> jax.Array:
+        """Interpolate at the point with coordinates `x`, one per grid axis."""
+        ndim = len(x)
+        n = jnp.array(self.f.shape[:ndim])
+        t = (jnp.stack(x) - self.lower) / (self.upper - self.lower) * (n - 1)
+        index = jnp.clip(jnp.floor(t).astype(jnp.int32), 0, n - 2)
+        weight = t - index
+        corners = jax.lax.dynamic_slice(
+            self.f,
+            (*index, *[0] * (self.f.ndim - ndim)),
+            (2,) * ndim + self.f.shape[ndim:],
+        )
+        value = jnp.nan_to_num(corners, nan=self.fill)
+        for i in range(ndim):
+            value = (1 - weight[i]) * value[0] + weight[i] * value[1]
+        inside = jnp.all((t >= 0) & (t <= n - 1))
+        return jnp.where(inside, value, self.fill)
+
+
 def build_magnetic_field_interpolator(
     magnetic_configuration: MagneticConfiguration,
-) -> interpax.Interpolator3D | interpax.Interpolator2D:
+) -> RegularGridInterpolator:
     """Build a magnetic field interpolator from the magnetic configuration.
 
-    For stellarators, returns an interpax.Interpolator3D that interpolates
-    (B_R, B_phi, B_Z) in cylindrical coordinates (R, phi, Z) on the
-    fundamental domain [0, pi/nfp].
-
-    For axisymmetric equilibria, returns an interpax.Interpolator2D that
-    interpolates (B_R, B_phi, B_Z) as a function of (R, Z).
+    For stellarators, interpolates (B_R, B_phi, B_Z) in cylindrical coordinates
+    (R, phi, Z) on the fundamental domain [0, pi/nfp]. For axisymmetric
+    equilibria, interpolates (B_R, B_phi, B_Z) as a function of (R, Z).
     """
-    if magnetic_configuration.is_axisymmetric:
-        B_cyl = magnetic_configuration.magnetic_field
-        rphiz = magnetic_configuration.rphiz
-        return interpax.Interpolator2D(
-            x=rphiz[:, 0, 0, 0],
-            y=rphiz[0, 0, :, 2],
-            f=jnp.nan_to_num(B_cyl[:, 0, :, :], nan=0.0),
-            method="linear",
-            extrap=0.0,
-        )
-
-    if not magnetic_configuration.is_stellarator_symmetric:
-        raise NotImplementedError(
-            "Non stellarator-symmetric equilibria not yet supported"
-        )
-
-    B_cyl = magnetic_configuration.magnetic_field
-    rphiz = magnetic_configuration.rphiz
-
-    return interpax.Interpolator3D(
-        x=rphiz[:, 0, 0, 0],
-        y=rphiz[0, :, 0, 1],
-        z=rphiz[0, 0, :, 2],
-        f=jnp.nan_to_num(B_cyl, nan=0.0),
-        method="linear",
-        extrap=0.0,
+    return _build_grid_interpolator(
+        magnetic_configuration, magnetic_configuration.magnetic_field, fill=0.0
     )
 
 
 def build_rho_interpolator(
     magnetic_configuration: MagneticConfiguration,
-) -> interpax.Interpolator3D | interpax.Interpolator2D:
+) -> RegularGridInterpolator:
     """Build rho interpolator for the given magnetic configuration.
 
-    For stellarators, returns an interpax.Interpolator3D that interpolates rho
-    in cylindrical coordinates (R, phi, Z) on the fundamental domain [0, pi/nfp].
-
-    For axisymmetric equilibria, returns an interpax.Interpolator2D that
-    interpolates rho as a function of (R, Z).
+    For stellarators, interpolates rho in cylindrical coordinates (R, phi, Z) on
+    the fundamental domain [0, pi/nfp]. For axisymmetric equilibria, interpolates
+    rho as a function of (R, Z).
     """
-    if magnetic_configuration.is_axisymmetric:
-        rho = magnetic_configuration.rho
-        rphiz = magnetic_configuration.rphiz
-        return interpax.Interpolator2D(
-            x=rphiz[:, 0, 0, 0],
-            y=rphiz[0, 0, :, 2],
-            f=jnp.nan_to_num(rho[:, 0, :], nan=1.1),
-            method="linear",
-            extrap=1.1,
-        )
+    return _build_grid_interpolator(
+        magnetic_configuration, magnetic_configuration.rho, fill=1.1
+    )
 
+
+def _build_grid_interpolator(
+    magnetic_configuration: MagneticConfiguration,
+    f: jax.Array,
+    fill: float,
+) -> RegularGridInterpolator:
+    rphiz = magnetic_configuration.rphiz
+    if magnetic_configuration.is_axisymmetric:
+        return RegularGridInterpolator(
+            lower=rphiz[0, 0, 0, ::2], upper=rphiz[-1, 0, -1, ::2], f=f[:, 0], fill=fill
+        )
     if not magnetic_configuration.is_stellarator_symmetric:
         raise NotImplementedError(
             "Non stellarator-symmetric equilibria not yet supported"
         )
-
-    rho = magnetic_configuration.rho
-    rphiz = magnetic_configuration.rphiz
-
-    return interpax.Interpolator3D(
-        x=rphiz[:, 0, 0, 0],
-        y=rphiz[0, :, 0, 1],
-        z=rphiz[0, 0, :, 2],
-        f=jnp.nan_to_num(rho, nan=1.1),
-        method="linear",
-        extrap=1.1,
+    return RegularGridInterpolator(
+        lower=rphiz[0, 0, 0], upper=rphiz[-1, -1, -1], f=f, fill=fill
     )
 
 
@@ -645,7 +657,7 @@ def build_radial_interpolators(
     magnetic_configuration: MagneticConfiguration,
     radial_profiles: RadialProfiles,
 ) -> tuple[
-    interpax.Interpolator3D | interpax.Interpolator2D,
+    RegularGridInterpolator,
     interpax.Interpolator1D,
     interpax.Interpolator1D,
 ]:

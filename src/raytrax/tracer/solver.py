@@ -3,7 +3,6 @@
 from typing import NamedTuple, cast
 
 import diffrax
-import interpax
 import jax
 import jax.numpy as jnp
 import jaxtyping as jt
@@ -97,12 +96,10 @@ def _eval_magnetic_field(
     phi = jnp.arctan2(position[1], position[0])
     z = position[2]
     if interpolators.is_axisymmetric:
-        B_interp_2d = cast(interpax.Interpolator2D, interpolators.magnetic_field)
-        B_cyl = B_interp_2d(r, z)
+        B_cyl = interpolators.magnetic_field(r, z)
     else:
         phi_mapped, z_query, in_second_half = _map_to_fundamental_domain(phi, z, nfp)
-        B_interp_3d = cast(interpax.Interpolator3D, interpolators.magnetic_field)
-        B_cyl = B_interp_3d(r, phi_mapped, z_query)
+        B_cyl = interpolators.magnetic_field(r, phi_mapped, z_query)
         B_cyl = _apply_B_stellarator_symmetry(B_cyl, in_second_half)
     return _cylindrical_to_cartesian_B(B_cyl, phi)
 
@@ -116,12 +113,10 @@ def _eval_rho(
     r = jnp.sqrt(position[0] ** 2 + position[1] ** 2)
     z = position[2]
     if interpolators.is_axisymmetric:
-        rho_interp_2d = cast(interpax.Interpolator2D, interpolators.rho)
-        return rho_interp_2d(r, z)
+        return interpolators.rho(r, z)
     phi = jnp.arctan2(position[1], position[0])
     phi_mapped, z_query, _ = _map_to_fundamental_domain(phi, z, nfp)
-    rho_interp_3d = cast(interpax.Interpolator3D, interpolators.rho)
-    return rho_interp_3d(r, phi_mapped, z_query)
+    return interpolators.rho(r, phi_mapped, z_query)
 
 
 def _y_to_state(
