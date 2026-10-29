@@ -232,7 +232,10 @@ _event = diffrax.Event(
 )
 
 _term = diffrax.ODETerm(_right_hand_side)  # type: ignore[arg-type]
-_solver = diffrax.Tsit5()
+# Third order on purpose: the linearly interpolated equilibrium and profiles make the
+# right-hand side only piecewise smooth, so higher-order tableaus lose their order and
+# Bosh3 reaches a given accuracy with the fewest right-hand-side evaluations.
+_solver = diffrax.Bosh3()
 
 
 def _solve(
@@ -253,10 +256,14 @@ def _solve(
     event, diffrax leaves unvisited SaveAt slots as inf; sol.t1 is always the
     scheduled t1 (max_arc_length), not the event time.
     """
+    # PI rather than diffrax's default I controller: on the non-smooth right-hand side
+    # the I controller rejects far more steps and is less accurate per evaluation.
     stepsize_controller = diffrax.PIDController(
         rtol=tracer_settings.relative_tolerance,
         atol=tracer_settings.absolute_tolerance,
         dtmax=tracer_settings.max_step_size,
+        pcoeff=0.4,
+        icoeff=0.3,
     )
     y0 = jnp.concatenate([position, direction, jnp.array([0.0])])
     return diffrax.diffeqsolve(

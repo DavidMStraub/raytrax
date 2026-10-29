@@ -26,7 +26,7 @@ The four float fields are ordinary JAX values (not static compile-time constants
 
 ### When to Adjust the Settings
 
-**`max_step_size`** is the most impactful parameter. The adaptive controller ([`Tsit5`](https://docs.kidger.site/diffrax/api/solvers/ode_solvers/#diffrax.Tsit5) + [`PIDController`](https://docs.kidger.site/diffrax/api/stepsize_controller/#diffrax.PIDController)) will take steps smaller than this when needed, but never larger. Reducing it forces finer integration near caustics or in steep-gradient regions — at the cost of more steps.
+**`max_step_size`** is the most impactful parameter. The adaptive controller ([`Bosh3`](https://docs.kidger.site/diffrax/api/solvers/ode_solvers/#diffrax.Bosh3) + a PI [`PIDController`](https://docs.kidger.site/diffrax/api/stepsize_controller/#diffrax.PIDController)) will take steps smaller than this when needed, but never larger. Reducing it forces finer integration near caustics or in steep-gradient regions — at the cost of more steps. In vacuum the error estimate is zero, so this cap is also what keeps the solver from stepping over the plasma.
 
 **`relative_tolerance` / `absolute_tolerance`** control the error estimate the PID controller tries to satisfy per step. Tightening them (e.g. `rtol=1e-6`) improves accuracy but increases the number of steps. The defaults are sufficient for power deposition profiles; gradient-based optimisation may benefit from tighter tolerances.
 

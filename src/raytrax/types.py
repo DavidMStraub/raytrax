@@ -207,7 +207,8 @@ class TracerSettings:
 
     max_step_size: float = 0.05
     """Maximum ODE step size in metres (arc length). Decreasing this improves
-    accuracy at the cost of more steps."""
+    accuracy at the cost of more steps. In vacuum the error estimate is zero, so this
+    cap also keeps the solver from stepping over the plasma."""
 
     max_arc_length: float = 20.0
     """Maximum arc length to integrate in metres before the solver gives up."""

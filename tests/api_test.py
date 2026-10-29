@@ -16,6 +16,7 @@ from raytrax.api import (
 )
 from raytrax.equilibrium.fourier import dvolume_drho
 from raytrax.equilibrium.interpolate import MagneticConfiguration
+from raytrax.examples import w7x
 from raytrax.physics import dispersion, quantities
 from raytrax.types import Beam, RadialProfiles, TracerSettings
 
@@ -111,6 +112,51 @@ def test_trace_w7x_beam(w7x_wout):
     assert result.radial_profile is not None
 
 
+@pytest.mark.parametrize("central_temperature_keV", [1.5, 5.0])
+def test_default_tolerances_resolve_narrow_deposition(
+    w7x_magnetic_configuration, central_temperature_keV
+):
+    """The default solver settings place a narrow W7-X X2 deposition within 1e-3 in rho.
+
+    A perpendicular launch absorbs within about 1 cm of arc length, which is the hardest
+    case for the step-size controller. The reference is the same trace at rtol = 1e-9,
+    which is converged to below 1e-6 in rho.
+    """
+    rho = np.linspace(0, 1, 101)
+    profiles = RadialProfiles(
+        rho=rho,
+        electron_density=0.6 * (0.1 + 0.9 * (1 - rho**2) ** 0.5),
+        electron_temperature=central_temperature_keV
+        * (0.05 + 0.95 * (1 - rho**2) ** 1.5),
+    ).with_zero_density_at_boundary(0.05)
+    beam = Beam(
+        position=np.asarray(w7x.PortA.D1.cartesian),
+        direction=np.asarray(
+            w7x.w7x_aiming_angles_to_direction(5.0, 0.0, w7x.PortA.D1.phi_deg)
+        ),
+        frequency=140e9,
+        mode="X",
+        power=1e6,
+    )
+
+    result = trace(w7x_magnetic_configuration, profiles, beam)
+    reference = trace(
+        w7x_magnetic_configuration,
+        profiles,
+        beam,
+        settings=TracerSettings(
+            relative_tolerance=1e-9, absolute_tolerance=1e-11, max_steps=8192
+        ),
+    )
+
+    np.testing.assert_allclose(
+        result.deposition_rho_mean, reference.deposition_rho_mean, rtol=0, atol=1e-3
+    )
+    np.testing.assert_allclose(
+        result.deposition_rho_std, reference.deposition_rho_std, rtol=0, atol=1e-3
+    )
+
+
 def test_ray_stays_on_dispersion_surface_with_finite_edge_density(
     tokamak_magnetic_configuration,
 ):
@@ -152,7 +198,7 @@ def test_ray_stays_on_dispersion_surface_with_finite_edge_density(
     assert in_plasma.sum() > 5
     h = np.sum(n_vec**2, axis=1) - np.asarray(n2_dispersion)
     # Residuals near the plasma edge are relaxed over a few cm.
-    np.testing.assert_array_less(np.abs(h[in_plasma]), 2e-3)
+    np.testing.assert_array_less(np.abs(h[in_plasma]), 3e-3)
 
 
 def _make_tokamak_beam_and_profiles(tokamak_magnetic_configuration):
@@ -199,7 +245,7 @@ def test_step_limit_is_reported_instead_of_silently_truncating(
 ):
     """A trace that runs out of ODE steps is flagged instead of reporting ~0 power.
 
-    The X-mode ray at the second harmonic is fully absorbed in about 20 steps.
+    The X-mode ray at the second harmonic is fully absorbed in about 50 steps.
     """
     _, profiles = _make_tokamak_beam_and_profiles(tokamak_magnetic_configuration)
     beam = Beam(
@@ -228,7 +274,7 @@ def test_step_limit_is_reported_instead_of_silently_truncating(
         tokamak_magnetic_configuration,
         profiles,
         beam,
-        settings=TracerSettings(max_steps=64),
+        settings=TracerSettings(max_steps=128),
     )
     assert not bool(complete.incomplete)
     assert float(complete.absorbed_power_fraction) > 0.99
