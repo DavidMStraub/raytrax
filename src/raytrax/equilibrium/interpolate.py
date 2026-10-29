@@ -9,7 +9,7 @@ to cylindrical coordinates ($r$, $\phi$, $z$).
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from functools import partial
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pyvista as pv
@@ -237,6 +237,10 @@ def interpolate_toroidal_to_cylindrical_grid(
     return jnp.stack(values, axis=1)
 
 
+_N_SEED_RHO = 10
+_N_SEED_THETA = 10
+"""Coarse (rho, theta) grid per plane whose nearest point seeds each node's Newton solve."""
+
 # Best-so-far: a node that does not converge keeps its smallest-residual iterate.
 _NEWTON: optx.AbstractRootFinder = optx.BestSoFarRootFinder(
     optx.Newton(rtol=1e-12, atol=1e-12)
@@ -318,6 +322,16 @@ def cylindrical_grid_for_equilibrium(
         xn=jnp.asarray(equilibrium.xn_nyq),
         m_max=int(np.max(equilibrium.xm_nyq)),
     )
+    seed_rho_theta_phi = jnp.stack(
+        jnp.meshgrid(
+            jnp.linspace(0, rho_max, _N_SEED_RHO),
+            jnp.linspace(0, 2 * jnp.pi, _N_SEED_THETA),
+            phis,
+            indexing="ij",
+        ),
+        axis=-1,
+    )
+    seed_rphiz = evaluate_rphiz_on_toroidal_grid(equilibrium, seed_rho_theta_phi)
     nodes = np.moveaxis(np.asarray(rphiz_cylindrical), 1, 0).reshape(n_phi, -1, 3)
     # Newton only runs on nodes inside a finely sampled ring a bit beyond rho_max;
     # the rest of the box is outside the domain. Each plane is padded to the same
@@ -344,13 +358,16 @@ def cylindrical_grid_for_equilibrium(
     )
     selected = np.argsort(~solve, axis=1, kind="stable")[:, : solve.sum(1).max()]
     # Samples off the axis seed Newton: (rho, theta) is singular there.
-    solved = jax.lax.map(
-        partial(_plane_values, geometry, field, rho_max),
+    solved = _solve_planes(
+        geometry,
+        field,
+        rho_max,
+        _NEWTON,
         (
             phis,
             jnp.asarray(np.take_along_axis(nodes, selected[..., None], axis=1)),
-            jnp.moveaxis(rho_theta_phi[1:], 2, 0).reshape(n_phi, -1, 3),
-            jnp.moveaxis(rphiz[1:], 2, 0).reshape(n_phi, -1, 3),
+            jnp.moveaxis(seed_rho_theta_phi[1:], 2, 0).reshape(n_phi, -1, 3),
+            jnp.moveaxis(seed_rphiz[1:], 2, 0).reshape(n_phi, -1, 3),
         ),
     )
     values = np.full((n_phi, n_r * n_z, 4), np.nan)
@@ -362,7 +379,13 @@ def cylindrical_grid_for_equilibrium(
     return jnp.concatenate([rphiz_cylindrical, jnp.asarray(values_rphiz)], axis=-1)
 
 
-class _ThetaHarmonics(NamedTuple):
+@partial(
+    jax.tree_util.register_dataclass,
+    data_fields=["knots", "coefficients", "xm", "xn"],
+    meta_fields=["m_max"],
+)
+@dataclass(frozen=True)
+class _ThetaHarmonics:
     """Fourier series sum_mn c_mn(rho) exp(i (m theta - n phi)) per quantity."""
 
     knots: jax.Array
@@ -386,10 +409,25 @@ class _ThetaHarmonics(NamedTuple):
         )
 
 
+@partial(jax.jit, static_argnames=("rho_max", "root_finder"))
+def _solve_planes(
+    geometry: _ThetaHarmonics,
+    field: _ThetaHarmonics,
+    rho_max: float,
+    root_finder: optx.AbstractRootFinder,
+    planes: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+) -> jax.Array:
+    # Sequential over planes: the nearest-seed search is nodes x seeds per plane.
+    return jax.lax.map(
+        partial(_plane_values, geometry, field, rho_max, root_finder), planes
+    )
+
+
 def _plane_values(
     geometry: _ThetaHarmonics,
     field: _ThetaHarmonics,
     rho_max: float,
+    root_finder: optx.AbstractRootFinder,
     plane: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
 ) -> jax.Array:
     """(rho, B_R, B_phi, B_Z) at the nodes of one phi plane; NaN beyond rho_max."""
@@ -403,7 +441,14 @@ def _plane_values(
         geometry_in_plane.x, geometry_in_plane.f[:, :2], extrap=True
     )
     return jax.vmap(
-        partial(_node_values, rz, geometry_in_plane, field.in_plane(phi), rho_max)
+        partial(
+            _node_values,
+            rz,
+            geometry_in_plane,
+            field.in_plane(phi),
+            rho_max,
+            root_finder,
+        )
     )(nodes[:, ::2], guess[:, :2])
 
 
@@ -412,6 +457,7 @@ def _node_values(
     geometry: interpax.Interpolator1D,
     field: interpax.Interpolator1D,
     rho_max: float,
+    root_finder: optx.AbstractRootFinder,
     rz: jax.Array,
     guess: jax.Array,
 ) -> jax.Array:
@@ -419,10 +465,10 @@ def _node_values(
     # chart through the axis, so a Newton step across it needs no special case.
     solution: optx.Solution = optx.root_find(
         _rz_residual,
-        _NEWTON,
+        root_finder,
         guess[0] * jnp.stack([jnp.cos(guess[1]), jnp.sin(guess[1])]),
         args=(rz_harmonics, rz),
-        max_steps=30,
+        max_steps=10,
         throw=False,
     )
     rho = jnp.linalg.norm(solution.value)
