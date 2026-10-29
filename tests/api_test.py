@@ -278,6 +278,8 @@ def test_step_limit_is_reported_instead_of_silently_truncating(
     )
     assert not bool(complete.incomplete)
     assert float(complete.absorbed_power_fraction) > 0.99
+    # The ray stops where exp(-tau) reaches 1e-3, not at the end of the step past it.
+    np.testing.assert_allclose(complete.optical_depth, np.log(1e3), rtol=1e-6)
 
 
 def test_tracer_settings_max_arc_length_limits_trajectory(

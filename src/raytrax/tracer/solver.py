@@ -7,6 +7,7 @@ import interpax
 import jax
 import jax.numpy as jnp
 import jaxtyping as jt
+import optimistix as optx
 
 from raytrax.physics import absorption, hamiltonian
 from raytrax.tracer import ray
@@ -226,8 +227,11 @@ def _cond_oob(t, y, args, **kwargs):
     return 20.0 - jnp.linalg.norm(y[:3])
 
 
+# The root find stops the ray where a condition crosses zero rather than at the end of
+# the step that crossed it, so the end of the ray does not jump with the step placement.
 _event = diffrax.Event(
     cond_fn=[_cond_exit, _cond_absorbed, _cond_oob],
+    root_finder=optx.Newton(rtol=1e-9, atol=1e-9),
     direction=[True, False, False],
 )
 
