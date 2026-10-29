@@ -212,27 +212,31 @@ def _right_hand_side(
     return jnp.concatenate([dr_ds, dn_ds, jnp.array([dtau_ds])])
 
 
-def _cond_exit(t, y, args, **kwargs):
-    """Terminate when ray exits plasma (rho > 1.05)."""
-    return _eval_rho(y[:3], args[1], args[2]) - 1.05
+def _cond_terminate(t, y, args, **kwargs):
+    """Terminate when this falls through zero, i.e. when the first of these happens.
+
+    - the ray exits the plasma (rho > 1.05),
+    - the ray is fully absorbed (exp(-tau) < 1e-3),
+    - the ray leaves the computational domain (|r| > 20 m).
+    """
+    return jnp.minimum(
+        jnp.minimum(
+            1.05 - _eval_rho(y[:3], args[1], args[2]),
+            jnp.exp(-y[6]) - 1e-3,
+        ),
+        20.0 - jnp.linalg.norm(y[:3]),
+    )
 
 
-def _cond_absorbed(t, y, args, **kwargs):
-    """Terminate when ray is fully absorbed (exp(-tau) < 1e-3)."""
-    return jnp.exp(-y[6]) - 1e-3
-
-
-def _cond_oob(t, y, args, **kwargs):
-    """Terminate when ray leaves the computational domain (|r| > 20 m)."""
-    return 20.0 - jnp.linalg.norm(y[:3])
-
-
-# The root find stops the ray where a condition crosses zero rather than at the end of
-# the step that crossed it, so the end of the ray does not jump with the step placement.
+# The root find stops the ray where the condition crosses zero rather than at the end
+# of the step that crossed it, so the end of the ray does not jump with the step
+# placement. Bisection on the step's bracket always converges; Newton started at the
+# end of the step can diverge when rho is not monotonic along a long vacuum step.
 _event = diffrax.Event(
-    cond_fn=[_cond_exit, _cond_absorbed, _cond_oob],
-    root_finder=optx.Newton(rtol=1e-9, atol=1e-9),
-    direction=[True, False, False],
+    cond_fn=_cond_terminate,
+    # mypy takes Bisection.norm, a ClassVar, for a constructor argument.
+    root_finder=optx.Bisection(rtol=1e-9, atol=1e-9),  # type: ignore[call-arg]
+    direction=False,
 )
 
 _term = diffrax.ODETerm(_right_hand_side)  # type: ignore[arg-type]

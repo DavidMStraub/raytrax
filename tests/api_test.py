@@ -282,6 +282,40 @@ def test_step_limit_is_reported_instead_of_silently_truncating(
     np.testing.assert_allclose(complete.optical_depth, np.log(1e3), rtol=1e-6)
 
 
+def test_ray_leaving_the_plasma_stops_at_the_exit_condition(w7x_wout):
+    """A ray leaving the plasma with a long step stops exactly at rho = 1.05.
+
+    The last step of this ray goes from rho = 1.04 to rho = 1.12, and rho is not
+    monotonic along it, so the root find must stay inside the step.
+    """
+    # B scaled to 3 T on axis.
+    configuration = MagneticConfiguration.from_vmec_wout(
+        w7x_wout, magnetic_field_scale=1.1792
+    )
+    phi = np.deg2rad(352.876)
+    beam = Beam(
+        position=jnp.array([6.6192 * np.cos(phi), 6.6192 * np.sin(phi), 0.4963]),
+        direction=jnp.array([-0.89116, 0.44952, -0.06135]),
+        frequency=45.4e9,
+        mode="X",
+        power=1e6,
+    )
+    rho = np.linspace(0, 1, 45)
+    profiles = RadialProfiles(
+        rho=rho,
+        electron_density=0.1 * (1 - rho**2),
+        electron_temperature=8.0 * (1 - rho**2),
+    )
+
+    result = trace(configuration, profiles, beam)
+
+    assert not bool(result.incomplete)
+    assert np.all(np.diff(result.beam_profile.arc_length) > 0)
+    np.testing.assert_allclose(
+        result.beam_profile.normalized_effective_radius[-1], 1.05, rtol=1e-6
+    )
+
+
 def test_tracer_settings_max_arc_length_limits_trajectory(
     tokamak_magnetic_configuration,
 ):
