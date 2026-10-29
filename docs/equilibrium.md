@@ -44,7 +44,7 @@ mag_conf = raytrax.MagneticConfiguration.from_vmec_wout(vmec_wout)
 
 #### Tuning grid resolution
 
-The import involves two grids: an intermediate curvilinear grid in VMEC flux coordinates $(\rho, \theta, \phi)$ on which the Fourier series are evaluated, and the final cylindrical grid $(R, \phi, Z)$ on which the ray tracer operates. Both are controlled via [`VmecGridResolution`][raytrax.equilibrium.interpolate.VmecGridResolution]:
+The ray tracer operates on a cylindrical grid $(R, \phi, Z)$. At each grid node, the import solves for the VMEC flux coordinates $(\rho, \theta)$ of the node in its $\phi$ plane with Newton's method and evaluates $\rho$ and $\boldsymbol{B}$ from the Fourier series there, so the values at the nodes are exact. A coarser sampling of the flux surfaces up to $\rho = 1.2$ fixes the $R$ and $Z$ extent of the grid. Both are controlled via [`VmecGridResolution`][raytrax.equilibrium.interpolate.VmecGridResolution]:
 
 ```python
 grid = raytrax.VmecGridResolution(
@@ -54,10 +54,10 @@ grid = raytrax.VmecGridResolution(
         n_phi=64,  # toroidal planes on the output cylindrical grid
         n_rho_profile=200,  # points for the 1-D dV/dρ profile
     ),
-    n_rho=50,  # radial flux surfaces on the intermediate VMEC grid
-    n_theta=60,  # poloidal points on the intermediate VMEC grid
+    n_rho=50,  # flux surfaces sampled for the grid extent
+    n_theta=60,  # poloidal points sampled for the grid extent
 )
 mag_conf = raytrax.MagneticConfiguration.from_vmec_wout(vmec_wout, grid=grid)
 ```
 
-The defaults (`n_r=45`, `n_z=55`, `n_phi=50`, `n_rho=40`, `n_theta=45`) are adequate for most stellarator geometries. Increasing them improves accuracy at the cost of memory and import time, which scales roughly as $n_r \cdot n_\phi \cdot n_z$.
+The defaults (`n_r=45`, `n_z=55`, `n_phi=50`, `n_rho=40`, `n_theta=45`) are adequate for most stellarator geometries. The accuracy of the ray tracer is set by the cylindrical grid, between whose nodes $\rho$ and $\boldsymbol{B}$ are interpolated linearly. Refining it costs memory and import time, which scale roughly as $n_r \cdot n_\phi \cdot n_z$. `n_rho` and `n_theta` only set the extent of the grid and have little effect on accuracy.

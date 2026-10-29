@@ -57,21 +57,19 @@ class CylindricalGridResolution:
 class VmecGridResolution:
     """Grid resolution for VMEC-based equilibrium imports.
 
-    Combines the shared :class:`CylindricalGridResolution` output grid with
-    VMEC-specific intermediate flux-coordinate sampling parameters.
+    Combines the shared `CylindricalGridResolution` output grid with the
+    VMEC-specific sampling that sets its extent.
 
-    The VMEC pipeline first evaluates Fourier series on an intermediate
-    curvilinear $(\\rho, \\theta, \\phi)$ grid, then scatter-interpolates the
-    result onto the cylindrical output grid. The intermediate grid parameters
-    ``n_rho`` and ``n_theta`` control the accuracy of that Fourier evaluation
-    step; they are invisible to the ray tracer.
+    The VMEC import solves for the flux coordinates of each cylindrical grid node
+    with Newton's method and evaluates the Fourier series there, so the values at
+    the nodes do not depend on ``n_rho`` and ``n_theta``. These only sample the
+    flux surfaces up to $\\rho = 1.2$ to find the $R$ and $Z$ extent of the grid.
 
     Attributes:
         cylindrical: Output cylindrical grid shared with all other importers.
-        n_rho: Number of radial (flux-surface) points on the intermediate
-            VMEC curvilinear grid.
-        n_theta: Number of poloidal points on the intermediate VMEC
-            curvilinear grid.
+        n_rho: Number of flux surfaces sampled to find the grid extent.
+        n_theta: Number of poloidal points per flux surface sampled to find the
+            grid extent.
     """
 
     cylindrical: CylindricalGridResolution = dataclass_field(
