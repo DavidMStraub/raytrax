@@ -91,9 +91,14 @@ def weakly_relativistic_dielectric_tensor(
     lam = (n_perp * w / w_c) ** 2 / mu
     sqrt_lam_mu = n_perp * w / w_c
 
-    # computing the Shkarofsky functions F_{q+1/2} at s=0 for all k required
-    q_max = max_k + 3  # because we need up to F_{q+2}
-    Fq = shkarofsky.shkarofsky(0, mu=mu, n_par=n_par, w=w, w_c=w_c, q_max=q_max)
+    # All harmonics s = 0, 1..max_s, -1..-max_s in one call, see shkarofsky().
+    harmonics = jnp.array([0, *range(1, max_s + 1), *range(-1, -max_s - 1, -1)])
+    q_max = max_s + max_k + 3  # because we need up to F_{q+2}
+    F = jnp.stack(
+        shkarofsky.shkarofsky(harmonics, mu=mu, n_par=n_par, w=w, w_c=w_c, q_max=q_max),
+        axis=1,
+    )
+    Fq = F[0]
 
     # D_33 is the only non-zero component since b(0, 0) = 0
     # Q^+_{0,0}(h=2)
@@ -119,12 +124,8 @@ def weakly_relativistic_dielectric_tensor(
 
     # sum over s > 0, k >= 0
     for s in range(1, max_s + 1):
-        # computing the Shkarofsky functions F_{q+1/2} for all k required
-        q_max = s + max_k + 3  # because we need up to F_{q+2}
-        Fq_s = shkarofsky.shkarofsky(s, mu=mu, n_par=n_par, w=w, w_c=w_c, q_max=q_max)
-        Fq_minus_s = shkarofsky.shkarofsky(
-            -s, mu=mu, n_par=n_par, w=w, w_c=w_c, q_max=q_max
-        )
+        Fq_s = F[s]
+        Fq_minus_s = F[max_s + s]
 
         for k in range(max_k + 1):
             a_sk_lam = a_shkarofsky(s, k) * lam ** (s + k - 1)

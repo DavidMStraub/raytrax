@@ -6,9 +6,6 @@ import jax
 import jax.numpy as jnp
 
 from raytrax.math.faddeeva import plasma_dispersion_function as Z
-from raytrax.math.faddeeva import (
-    plasma_dispersion_function_derivative as Z_prime,
-)
 from raytrax.types import ScalarFloat
 
 # F_{1/2} and F_{3/2} are Z-function base cases — stable at any psi, only need
@@ -43,8 +40,11 @@ def _shkarofsky_sequence(
     is_psi_zero_recur = jnp.abs(psi) < _PSI_TOLERANCE_RECUR
 
     # F_{1/2} and F_{3/2}, eqs. 29-30 of Krivensky and Orefice (psi != 0).
-    z_plus = Z(psi - phi)
-    z_minus = Z(-psi - phi)
+    # One vectorized Z call for all arguments: each w(z) is a serial 40-term
+    # Horner chain, so separate scalar calls are latency bound (~7x slower).
+    z_plus, z_minus, z_mid = Z(
+        jnp.stack(jnp.broadcast_arrays(psi - phi, -psi - phi, -phi))
+    )
     f0_nonzero = -(z_plus + z_minus) / (2 * phi)
     # Use a safe denominator to avoid 0/0: jnp.where evaluates both branches,
     # so replace psi with 1 when at the base threshold to suppress NaN/Inf.
@@ -53,8 +53,8 @@ def _shkarofsky_sequence(
 
     # F_{1/2}, eq. 31. For F_{3/2} in the psi -> 0 limit we use -Z'(-phi);
     # the original paper appears to have a sign typo for this term.
-    f0_zero = -Z(-phi) / phi
-    f1_zero = -Z_prime(-phi)
+    f0_zero = -z_mid / phi
+    f1_zero = 2 * (1 - phi * z_mid)  # -Z'(-phi), with Z' = -2(1 + zZ)
     f0 = jnp.where(is_psi_zero_base, f0_zero, f0_nonzero)
     f1 = jnp.where(is_psi_zero_base, f1_zero, f1_nonzero)
 
@@ -83,7 +83,7 @@ def _shkarofsky_sequence(
 
 
 def shkarofsky(
-    z: ScalarFloat,
+    z: ScalarFloat | jax.Array,
     mu: ScalarFloat,
     n_par: ScalarFloat,
     w: ScalarFloat,
@@ -93,8 +93,9 @@ def shkarofsky(
     r"""Compute Shkarofsky functions :math:`\mathcal{F}_{q+1/2}(s)` for q = 0, 1, ..., q_max.
 
     Uses iterative upward recurrence from the two base cases (q=0, q=1),
-    requiring only 2 plasma dispersion function evaluations (for psi != 0)
-    or 1 Z + 1 Z' (for psi = 0), regardless of q_max.
+    requiring 3 plasma dispersion function evaluations per harmonic index,
+    regardless of q_max. Passing all harmonic indices as one array evaluates
+    them in a single vectorized call.
 
     The function is defined as
 
@@ -108,7 +109,7 @@ def shkarofsky(
     pp. 125-131).
 
     Args:
-        z: Harmonic index parameter (integer, can be negative).
+        z: Harmonic index (integer, can be negative), or an array of them.
         mu: Inverse normalized temperature, mu = 2 / v_th^2.
         n_par: Parallel refractive index.
         w: Angular wave frequency (2*pi*f).
@@ -116,7 +117,7 @@ def shkarofsky(
         q_max: Maximum q value (returns q = 0, 1, ..., q_max).
 
     Returns:
-        List of length q_max + 1, where element i is F_{i+1/2}(z).
+        List of length q_max + 1, where element i is F_{i+1/2}(z), shaped like z.
     """
     psi = jnp.asarray(n_par * jnp.sqrt(mu / 2), jnp.complex128)
     alpha_s = jnp.asarray(n_par**2 / 2 - (1 - z * w_c / w), jnp.complex128)
