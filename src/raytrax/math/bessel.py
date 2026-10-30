@@ -19,14 +19,17 @@ def _jv_series(v, z):
     Pure JAX implementation — no callbacks, fully differentiable, vmap-friendly.
     Handles both scalar and array z inputs via broadcasting.
     """
+    half_z = z / 2.0
+    return half_z**v * jv_series_q(v, half_z * half_z)
+
+
+def jv_series_q(order: int, q):
+    """S with J_order(z) = (z/2)^order S(z^2/4), an entire function of q = z^2/4."""
     coefficients = [
-        (-1) ** k / (math.factorial(k) * math.factorial(k + v))
+        (-1) ** k / (math.factorial(k) * math.factorial(k + order))
         for k in range(_JV_SERIES_NTERMS)
     ]
-    half_z = z / 2.0
-    q = half_z * half_z
-    total = jnp.polyval(jnp.asarray(coefficients[::-1]), q)
-    return half_z**v * total
+    return jnp.polyval(jnp.asarray(coefficients[::-1]), q)
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(0,))

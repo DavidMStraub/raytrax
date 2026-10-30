@@ -15,7 +15,6 @@ from raytrax.physics import dielectric_tensor as dielectric_tensor_module
 from raytrax.physics import distribution_function, polarization, power_flux, quantities
 from raytrax.types import ScalarFloat
 
-ScalarInt = int | jt.Int[jax.Array, " "]
 ScalarBool = bool | jt.Bool[jax.Array, " "]
 
 
@@ -391,7 +390,7 @@ def compute_resonance_integral(
     u_max = jnp.where(near_lightline, 0.0, u_max)
 
     # The u_gamma_limit = (1-nY)/N_∥ bound is not enforced explicitly; the
-    # γ²−u_∥²−1<0 guard in resonance_integrand zeros the integrand for γ<1.
+    # u_perp^2 clamp in quasilinear_diffusion_coefficient zeros the integrand for γ<1.
 
     def compute_integral() -> ScalarFloat:
         # K2_scaled = kve(2, mu) depends only on thermal_velocity, which is
@@ -441,7 +440,7 @@ def _resonance_quadrature(rtol: float, harmonic_index: int) -> tuple[float, int]
 
 
 def resonance_integrand(
-    harmonic_index: ScalarInt,
+    harmonic_index: int,
     cyclotron_frequency: ScalarFloat,
     frequency: ScalarFloat,
     refractive_index_para: ScalarFloat,
@@ -470,44 +469,6 @@ def resonance_integrand(
         harmonic_index * cyclotron_frequency / frequency
         + refractive_index_para * parallel_momentum
     )
-    return jax.lax.cond(
-        # If this is negative, no solution in the u_para, u_perp plane exists
-        # as u_perp^2 is always positive
-        lorentz_factor**2 - parallel_momentum**2 - 1 < 0,
-        lambda: 0.0,
-        lambda: _resonance_integrand_full(
-            harmonic_index=harmonic_index,
-            cyclotron_frequency=cyclotron_frequency,
-            frequency=frequency,
-            refractive_index_perp=refractive_index_perp,
-            refractive_index_para=refractive_index_para,
-            parallel_momentum=parallel_momentum,
-            lorentz_factor=lorentz_factor,
-            thermal_velocity=thermal_velocity,
-            K2_scaled=K2_scaled,
-            polarization_vector=polarization_vector,
-        ),
-    )
-
-
-def _resonance_integrand_full(
-    harmonic_index: ScalarInt,
-    cyclotron_frequency: ScalarFloat,
-    frequency: ScalarFloat,
-    refractive_index_para: ScalarFloat,
-    refractive_index_perp: ScalarFloat,
-    parallel_momentum: ScalarFloat,
-    lorentz_factor: ScalarFloat,
-    thermal_velocity: ScalarFloat,
-    K2_scaled: ScalarFloat,
-    polarization_vector: jt.Complex[jax.Array, "3"],
-) -> ScalarFloat:
-    """Compute the resonance integrand in the case where it does not vanish.
-
-    This auxiliary function is needed for the `jax.lax.cond` condition in
-    `resonance_integrand` to avoid computing the quasilinear diffusion coefficient
-    when the resonance condition is not satisfied.
-    """
     Dql = quasilinear_diffusion_coefficient(
         harmonic_index=harmonic_index,
         cyclotron_frequency=cyclotron_frequency,
@@ -527,7 +488,7 @@ def _resonance_integrand_full(
 
 
 def quasilinear_diffusion_coefficient(
-    harmonic_index: ScalarInt,
+    harmonic_index: int,
     cyclotron_frequency: ScalarFloat,
     frequency: ScalarFloat,
     refractive_index_perp: ScalarFloat,
@@ -554,51 +515,22 @@ def quasilinear_diffusion_coefficient(
     Returns:
         The quasilinear diffusion coefficient Dql.
     """
-    # u_perp = p_perp / (m_0 c).  Two forms to avoid 0*Inf=NaN in the adjoint:
-    #   perp_mom_sq       = max(0, x)       → gradient=0 at boundary (used in return)
-    #   perpendicular_momentum = sqrt(max(1e-30, x)) → finite gradient (used in kperp_rho)
-    perp_mom_sq = jnp.maximum(0.0, lorentz_factor**2 - parallel_momentum**2 - 1)
-    perpendicular_momentum = jnp.sqrt(
-        jnp.maximum(1e-30, lorentz_factor**2 - parallel_momentum**2 - 1)
-    )
-
-    # k_⊥ρ_L with the electron-helicity sign convention (negative).
-    # J_{-n}(-|z|) = J_n(|z|) for all n, whereas J_{-n}(+|z|) = (-1)^n J_n(|z|)
-    # differs by sign for odd harmonics; the minus ensures correct odd-n terms.
-    kperp_rho = -(
-        refractive_index_perp * perpendicular_momentum * frequency / cyclotron_frequency
-    )
-
-    # Avoid division by zero in An1 = n·Jn/z.
-    kperp_rho_threshold = 1e-10
-    kperp_rho_safe = jnp.where(
-        jnp.abs(kperp_rho) < kperp_rho_threshold,
-        kperp_rho_threshold,
-        kperp_rho,
-    )
-
-    Jn = bessel.jv_jax(-harmonic_index, kperp_rho_safe)
-    dJn = bessel.djv_jax(-harmonic_index, kperp_rho_safe)
-
-    An1 = (-harmonic_index) * Jn / kperp_rho_safe
-    An2 = 1j * dJn
-    # Avoid division by zero when perpendicular_momentum is very small
-    perp_safe = jnp.where(
-        perpendicular_momentum < kperp_rho_threshold, 1.0, perpendicular_momentum
-    )
-    An3 = (parallel_momentum / perp_safe) * Jn
-    An3 = jnp.where(perpendicular_momentum < kperp_rho_threshold, 0.0, An3)
-
-    An = jnp.array(
-        [
-            [An1 * An1, An1 * An2, An1 * An3],
-            [-An1 * An2, -An2 * An2, -An2 * An3],
-            [An1 * An3, An2 * An3, An3 * An3],
-        ],
-        dtype=jnp.complex128,
-    )
-
-    # evaluate Hermitian form: pe^H * An * pe
-    # vdot does conjugation on first argument
-    D = jnp.vdot(polarization_vector, An @ polarization_vector)
-    return perp_mom_sq * D.real
+    # Dql = u_perp^2 |Pi . e|^2, Pi = (-n J_{-n}(z)/z, i J_{-n}'(z), u_par/u_perp J_{-n}(z)),
+    # z = k_perp rho_L = -kappa u_perp: negative for the electron helicity, and its sign
+    # fixes the third component relative to the first two. With J_m(z) = (z/2)^m S_m(q),
+    # q = z^2/4, the components share the factor (-1)^n z^(n-1) / 2^n, so
+    #   Dql = u_perp^2 q^(n-1) / 4 |a . e|^2,
+    #   a = (-n S_n, i (n S_n - 2 q S_{n+1}), -kappa u_par S_n),
+    # a polynomial in u_par: no square root, no 1/z, no branch. Outside the resonance
+    # circle (u_perp^2 < 0) the clamp makes Dql zero.
+    u_perp_sq = jnp.maximum(lorentz_factor**2 - parallel_momentum**2 - 1, 0.0)
+    kappa = refractive_index_perp * frequency / cyclotron_frequency
+    q = kappa**2 * u_perp_sq / 4
+    s_n = bessel.jv_series_q(harmonic_index, q)
+    s_n1 = bessel.jv_series_q(harmonic_index + 1, q)
+    a1 = -harmonic_index * s_n
+    a2 = harmonic_index * s_n - 2 * q * s_n1
+    a3 = -kappa * parallel_momentum * s_n
+    e = polarization_vector
+    a_dot_e = a1 * e[0] + 1j * a2 * e[1] + a3 * e[2]
+    return u_perp_sq * q ** (harmonic_index - 1) / 4 * jnp.abs(a_dot_e) ** 2

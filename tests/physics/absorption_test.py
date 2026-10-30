@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import scipy.special
 from scipy.integrate import quad
 
 from raytrax.math import bessel
@@ -589,3 +590,41 @@ def test_resonance_integral_matches_quadrature_over_whole_circle(
     np.testing.assert_allclose(
         absorption.compute_resonance_integral(**args), reference, rtol=1e-12, atol=0
     )
+
+
+@pytest.mark.parametrize("harmonic", [1, 2, 3, 4])
+def test_quasilinear_diffusion_matches_bessel_form(harmonic):
+    """The polynomial Dql equals u_perp^2 |Pi . e|^2 with Pi built from scipy's J_{-n}(z).
+
+    Covers |z| = |k_perp rho_L| up to 10, beyond what hot, down-shifted resonances
+    with N_perp ~ 3 reach inside the integration window, and both signs of u_par."""
+    rng = np.random.default_rng(harmonic)
+    n_points = 200
+    u_par = rng.uniform(-1.0, 1.0, n_points)
+    u_perp = rng.uniform(1e-3, 1.0, n_points)
+    kappa = rng.uniform(0.0, 10.0, n_points)
+    e = rng.normal(size=(n_points, 3)) + 1j * rng.normal(size=(n_points, 3))
+    e /= np.linalg.norm(e, axis=1, keepdims=True)
+
+    z = -kappa * u_perp
+    jn = scipy.special.jv(-harmonic, z)
+    pi = np.stack(
+        [-harmonic * jn / z, 1j * scipy.special.jvp(-harmonic, z), u_par / u_perp * jn],
+        axis=1,
+    )
+    expected = u_perp**2 * np.abs(np.sum(pi * e, axis=1)) ** 2
+
+    def polynomial_form(u_par, u_perp, kappa, e):
+        return absorption.quasilinear_diffusion_coefficient(
+            harmonic_index=harmonic,
+            cyclotron_frequency=_FREQ / kappa,
+            frequency=_FREQ,
+            refractive_index_perp=1.0,
+            lorentz_factor=jnp.sqrt(1 + u_par**2 + u_perp**2),
+            parallel_momentum=u_par,
+            polarization_vector=e,
+        )
+
+    got = jax.vmap(polynomial_form)(*map(jnp.asarray, (u_par, u_perp, kappa, e)))
+    # Relative to the largest value: Dql has zeros where |Pi . e| vanishes.
+    np.testing.assert_allclose(got, expected, rtol=0, atol=1e-12 * np.max(expected))
