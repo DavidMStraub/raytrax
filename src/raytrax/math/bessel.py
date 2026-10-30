@@ -5,6 +5,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 # Number of terms in the ascending power series for J_v(z).
 # 30 terms give ~1e-14 relative accuracy for |z| up to 10.
@@ -79,6 +80,19 @@ _KV_SERIES_NTERMS = 50
 _KV_SWITCHOVER = 10.0
 
 
+# Precomputed series coefficients
+_K_FACTORIAL = np.array([math.factorial(k) for k in range(_KV_SERIES_NTERMS)], float)
+_K_HARMONIC = np.concatenate([[0.0], np.cumsum(1.0 / np.arange(1, _KV_SERIES_NTERMS))])
+_I0_COEFFICIENTS = 1.0 / _K_FACTORIAL**2
+_I1_COEFFICIENTS = 1.0 / (
+    _K_FACTORIAL * _K_FACTORIAL * np.arange(1, _KV_SERIES_NTERMS + 1)
+)
+# psi(k+1) + psi(k+2) = -2*gamma + 2*H_k + 1/(k+1)
+_K1_PSI_SUM = (
+    -2 * _EULER_MASCHERONI + 2 * _K_HARMONIC + 1.0 / np.arange(1, _KV_SERIES_NTERMS + 1)
+)
+
+
 def _k0_series(z):
     """K_0(z) via power series (DLMF 10.31.1 with n=0).
 
@@ -88,27 +102,9 @@ def _k0_series(z):
     """
     half_z = z / 2.0
     log_half_z = jnp.log(jnp.maximum(jnp.abs(half_z), 1e-300))
-
-    k = jnp.arange(_KV_SERIES_NTERMS, dtype=jnp.float64)
-    k_r = k.reshape((-1,) + (1,) * jnp.ndim(z))
-
-    # (z/2)^{2k} / (k!)^2
-    log_terms = 2 * k_r * log_half_z - 2 * jax.scipy.special.gammaln(k_r + 1)
-    terms = jnp.exp(log_terms)
-
-    I0 = jnp.sum(terms, axis=0)
-
-    # Harmonic numbers: H_0=0, H_k = 1 + 1/2 + ... + 1/k
-    H = jnp.concatenate(
-        [
-            jnp.array([0.0]),
-            jnp.cumsum(1.0 / jnp.arange(1, _KV_SERIES_NTERMS, dtype=jnp.float64)),
-        ]
-    )
-    H_r = H.reshape((-1,) + (1,) * jnp.ndim(z))
-
-    harm_sum = jnp.sum(H_r * terms, axis=0)
-
+    q = half_z * half_z
+    I0 = jnp.polyval(jnp.asarray(_I0_COEFFICIENTS[::-1]), q)
+    harm_sum = jnp.polyval(jnp.asarray((_K_HARMONIC * _I0_COEFFICIENTS)[::-1]), q)
     return -(log_half_z + _EULER_MASCHERONI) * I0 + harm_sum
 
 
@@ -120,34 +116,10 @@ def _k1_series(z):
     """
     half_z = z / 2.0
     log_half_z = jnp.log(jnp.maximum(jnp.abs(half_z), 1e-300))
-
-    k = jnp.arange(_KV_SERIES_NTERMS, dtype=jnp.float64)
-    k_r = k.reshape((-1,) + (1,) * jnp.ndim(z))
-
+    q = half_z * half_z
     # I_1(z) = sum_k (z/2)^{2k+1} / (k! (k+1)!)
-    log_I1_terms = (2 * k_r + 1) * log_half_z - (
-        jax.scipy.special.gammaln(k_r + 1) + jax.scipy.special.gammaln(k_r + 2)
-    )
-    I1 = jnp.sum(jnp.exp(log_I1_terms), axis=0)
-
-    # Harmonic numbers
-    H = jnp.concatenate(
-        [
-            jnp.array([0.0]),
-            jnp.cumsum(1.0 / jnp.arange(1, _KV_SERIES_NTERMS, dtype=jnp.float64)),
-        ]
-    )
-
-    # psi(k+1) + psi(k+2) = -2*gamma + 2*H_k + 1/(k+1)
-    psi_sum = -2 * _EULER_MASCHERONI + 2 * H + 1.0 / (k + 1)
-    psi_sum_r = psi_sum.reshape((-1,) + (1,) * jnp.ndim(z))
-
-    # (z/2)^{2k} / (k! (k+1)!)
-    log_sum_terms = 2 * k_r * log_half_z - (
-        jax.scipy.special.gammaln(k_r + 1) + jax.scipy.special.gammaln(k_r + 2)
-    )
-    series = jnp.sum(psi_sum_r * jnp.exp(log_sum_terms), axis=0)
-
+    I1 = half_z * jnp.polyval(jnp.asarray(_I1_COEFFICIENTS[::-1]), q)
+    series = jnp.polyval(jnp.asarray((_K1_PSI_SUM * _I1_COEFFICIENTS)[::-1]), q)
     return 1.0 / z + log_half_z * I1 - (z / 4.0) * series
 
 
@@ -189,30 +161,15 @@ def _kve_asymptotic(v, z):
     where a_k(v) = prod_{j=1}^{k} (4v^2 - (2j-1)^2) / (8^k * k!)
 
     Accurate for large z (our application has z = mu = 2/v_th^2 > 50).
-    Pure JAX implementation — no callbacks, fully vmap-compatible.
+    v must be a Python integer (passed via nondiff_argnums).
     """
-    four_v2 = 4.0 * v * v
-
-    # Build coefficients a_k iteratively
     # a_0 = 1, a_k = a_{k-1} * (4v^2 - (2k-1)^2) / (8k)
-    def body(carry, k):
-        a_prev = carry
-        a_k = a_prev * (four_v2 - (2.0 * k - 1.0) ** 2) / (8.0 * k)
-        return a_k, a_k
-
-    _, coeffs = jax.lax.scan(
-        body, jnp.ones_like(z), jnp.arange(1, _KVE_ASYMP_NTERMS + 1, dtype=jnp.float64)
-    )
-    # coeffs has shape (N, *z.shape); prepend a_0=1
-    a0 = jnp.ones_like(z)[jnp.newaxis]
-    all_coeffs = jnp.concatenate([a0, coeffs], axis=0)  # (N+1, *z.shape)
-
-    # Compute sum: a_0 + a_1/z + a_2/z^2 + ...
-    k = jnp.arange(_KVE_ASYMP_NTERMS + 1, dtype=jnp.float64)
-    # Reshape k for broadcasting
-    k = k.reshape((-1,) + (1,) * jnp.ndim(z))
-    powers = z ** (-k)
-    result = jnp.sum(all_coeffs * powers, axis=0)
+    coefficients = [1.0]
+    for k in range(1, _KVE_ASYMP_NTERMS + 1):
+        coefficients.append(
+            coefficients[-1] * (4.0 * v * v - (2.0 * k - 1.0) ** 2) / (8.0 * k)
+        )
+    result = jnp.polyval(jnp.asarray(coefficients[::-1]), 1.0 / z)
     return jnp.sqrt(jnp.pi / (2.0 * z)) * result
 
 
